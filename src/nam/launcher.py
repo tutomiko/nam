@@ -8,7 +8,7 @@ import sys
 import uvicorn
 
 from nam.module import discover_module_specs
-from nam.module_loader import start_frontend_watchers
+from nam.module_loader import build_all_once, start_frontend_watchers
 from nam.project import load_project
 
 _PROJECT_PATH_ENV_VAR = "NAM_PROJECT_PATH"
@@ -19,9 +19,10 @@ _watchers_stop_event = None
 
 def _parse_args(argv=None):
     parser = argparse.ArgumentParser(prog="nam", description="Not Another Monolith")
-    parser.add_argument("project_path", help="Path to the project directory containing config.yaml")
+    parser.add_argument("project_path", help="Path to the project directory containing project.yaml")
     parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=None,
+                         help="Overrides the 'port' key in project.yaml (default 8000) if given.")
     return parser.parse_args(argv)
 
 
@@ -39,6 +40,7 @@ def main(argv=None):
 
     args = _parse_args(argv)
     project = load_project(args.project_path)
+    port = args.port if args.port is not None else project.port
 
     # uvicorn's reloader runs the app factory in a freshly spawned child
     # process, which does not inherit this process's Python globals - so
@@ -47,18 +49,27 @@ def main(argv=None):
     os.environ[_PROJECT_PATH_ENV_VAR] = str(project.root)
 
     modules = discover_module_specs(project.modules_dir)
-    _watcher_threads, _watchers_stop_event = start_frontend_watchers(
-        modules=modules,
-        bundles_dir=project.bundles_dir,
-        shared_dir=project.shared_dir,
-        cwd=project.root,
-    )
-    atexit.register(_cleanup_watchers)
+
+    if project.reload:
+        _watcher_threads, _watchers_stop_event = start_frontend_watchers(
+            modules=modules,
+            bundles_dir=project.bundles_dir,
+            shared_dir=project.shared_dir,
+            cwd=project.root,
+        )
+        atexit.register(_cleanup_watchers)
+    else:
+        build_all_once(
+            modules=modules,
+            bundles_dir=project.bundles_dir,
+            shared_dir=project.shared_dir,
+            cwd=project.root,
+        )
 
     uvicorn.run(
         "nam.launcher:_create_app_for_reload",
         host=args.host,
-        port=args.port,
+        port=port,
         reload=project.reload,
         factory=True,
         reload_dirs=[str(project.root)],
