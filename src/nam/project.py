@@ -11,6 +11,7 @@ from typing import Optional
 from nam.environment import get_app_data_dir
 
 DEFAULT_OPTIMIZATION = "throughput"
+DEFAULT_PORT = 8000
 PARALLELLISM_AUTO = "auto"
 
 
@@ -22,6 +23,7 @@ class Project:
     parallellism: Optional[int]
     optimization: str
     reload: bool
+    port: int
     app_data_dir: Path
     modules_dir: Path
     shared_dir: Path
@@ -32,11 +34,15 @@ class Project:
 
     @property
     def config_path(self) -> Path:
-        return self.root / "config.yaml"
+        return self.root / "project.yaml"
+
+    @property
+    def global_routes_path(self) -> Path:
+        return self.root / "app.py"
 
 
 def _load_config(root: Path) -> dict:
-    config_path = root / "config.yaml"
+    config_path = root / "project.yaml"
     if not config_path.exists():
         return {}
     with open(config_path, "r") as f:
@@ -113,6 +119,7 @@ def load_project(project_path: str | Path) -> Project:
         parallellism=_resolve_parallellism(config.get("parallellism")),
         optimization=config.get("optimization", DEFAULT_OPTIMIZATION),
         reload=bool(config.get("reload", True)),
+        port=int(config.get("port", DEFAULT_PORT)),
         app_data_dir=app_data_dir,
         modules_dir=root / "modules",
         shared_dir=root / "shared",
