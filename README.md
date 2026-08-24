@@ -227,6 +227,14 @@ pip install pytest
 pytest
 ```
 
+## Experimental / Partial
+This is a partial release of what was internal tooling. 
+Most of the unit tests were not included, and most documentation has been stripped 
+until investigated and adjusted thoroughly. 
+
+As this release is missing most of the test suite it should be considered NOT safe 
+for production. 
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
