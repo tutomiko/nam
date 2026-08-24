@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse
 from starlette.middleware.gzip import GZipMiddleware
 
 from nam import concurrency
@@ -59,20 +59,14 @@ def create_app(project: Project) -> FastAPI:
     app.mount("/weights", StaticFiles(directory=str(project.weights_dir)), name="weights")
     app.mount("/bundles", StaticFiles(directory=str(project.bundles_dir)), name="bundles")
 
+    app.state.app_html_path = APP_HTML_PATH
+
     loaded = load_modules_into_app(app, project, _serve_app_html)
     app.state.mounted_modules = loaded.mounted
-    app.state.nav_modules = loaded.nav
     app.state.project = project
 
     @app.get("/")
-    def read_root(request: Request):
-        sites = request.app.state.nav_modules
-        if sites:
-            return RedirectResponse(url=f"/{sites[0]['id']}")
+    def read_root():
         return FileResponse(str(APP_HTML_PATH))
-
-    @app.get("/api/navigation")
-    def get_navigation(request: Request):
-        return request.app.state.nav_modules
 
     return app
