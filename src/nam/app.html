@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sola Studio</title>
+    <style>
+        :root {
+            --chassis-1: #ffffff;
+            --seam: #e5e7eb;
+            --ink-dim: #9ca3af;
+            --signal: #3b82f6;
+        }
+        body { font-family: sans-serif; margin: 0; padding: 0; background-color: #f9fafb; }
+    </style>
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script>
+        (function() {
+            const pathParts = window.location.pathname.split('/').filter(Boolean);
+            const moduleName = pathParts.length > 0 ? pathParts[0] : null;
+
+            if (moduleName) {
+                const script = document.createElement('script');
+                script.src = `/bundles/${moduleName}.js`;
+                script.onerror = () => console.error(`Failed to load bundle: /bundles/${moduleName}.js`);
+                document.body.appendChild(script);
+            }
+        })();
+    </script>
+</body>
+</html>
