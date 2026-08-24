@@ -138,16 +138,30 @@ class Task:
         self._layer = layer
         self._owner = owner
         self._batch = batch
-        self._ready_lock = threading.Lock()
-        self._readied = False
+        self._settle_lock = threading.Lock()
+        self._settled = False
 
-    def ready(self):
-        with self._ready_lock:
-            if self._readied:
-                return
-            self._readied = True
+    def _settle_once(self):
+        with self._settle_lock:
+            if self._settled:
+                return False
+            self._settled = True
+            return True
 
-        self._layer._on_task_ready(self._batch)
+    def ready(self, batch=None):
+        if not self._settle_once():
+            return
+
+        if batch is None:
+            surviving_batch = self._batch
+        else:
+            requested_frames = set(batch)
+            surviving_batch = [f for f in self._batch if f in requested_frames]
+
+        self._layer._on_task_ready(surviving_batch)
+
+    def abort(self):
+        self._settle_once()
 
 
 class OrchestrationLayer:
@@ -226,19 +240,28 @@ class OrchestrationLayer:
             
             return batch_region
         
+    def _resolve_sync_handler_result(self, task, source_batch, handler_result):
+        if not task._settle_once():
+            return []
+
+        if handler_result is None:
+            return source_batch
+
+        surviving_frames = set(handler_result)
+        return [f for f in source_batch if f in surviving_frames]
+
     def _execute_batch(self, batch):
         batch_proceed = []
         
         if self._shared is True:
             task = Task(self, None, batch)
             try:
-                batch_accepted = self._handler(self._pipeline, task, batch)
+                handler_result = self._handler(self._pipeline, task, batch)
                 
                 if self._is_async:
                     return
                 
-                if batch_accepted:
-                    batch_proceed = batch
+                batch_proceed = self._resolve_sync_handler_result(task, batch, handler_result)
             except Exception as ex:
                 traceback.print_exc()
         else:
@@ -246,22 +269,18 @@ class OrchestrationLayer:
             
             for batch_owner in batch_aggregates.keys():
                 batch_aggregate = sorted(batch_aggregates[batch_owner])
-                batch_accepted = False
                 task = Task(self, batch_owner, batch_aggregate)
                 
                 try:
-                    batch_accepted = self._handler(batch_owner, task, batch_aggregate)
+                    handler_result = self._handler(batch_owner, task, batch_aggregate)
                 except Exception as ex:
                     traceback.print_exc()
+                    continue
                 
                 if self._is_async:
                     continue
                     
-                if batch_accepted is None:
-                    batch_accepted = True
-                
-                if batch_accepted:
-                    batch_proceed.extend(batch_aggregate)
+                batch_proceed.extend(self._resolve_sync_handler_result(task, batch_aggregate, handler_result))
             
             if self._is_async:
                 return
@@ -358,8 +377,8 @@ class OrchestrationPipeline:
         self._chain_size = 0
         self._executor = executor
         
-    def add_layer(self, role, handler, contiguous=False, min_batch=1, max_batch=256, yield_after=_DEFAULT_YIELD, shared=False, async_=False):
-        layer = OrchestrationLayer(self, self._executor, self._chain_size, handler, max_batch, min_batch, contiguous, yield_after, shared, role, is_async=async_)
+    def add_layer(self, role, handler, contiguous=False, min_batch=1, max_batch=256, yield_after=_DEFAULT_YIELD, shared=False, asynchronous=False):
+        layer = OrchestrationLayer(self, self._executor, self._chain_size, handler, max_batch, min_batch, contiguous, yield_after, shared, role, is_async=asynchronous)
         
         if self._chain_head is None:
             self._chain_head = layer
