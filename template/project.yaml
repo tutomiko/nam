@@ -1,1 +1,5 @@
-
+environment: my-project
+parallellism: auto
+optimization: throughput
+reload: true
+port: 8000
