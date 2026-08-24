@@ -9,6 +9,10 @@ nam is `nam.concurrency`, a batching orchestrator built for running
 multi-stage CPU, GPU, disk or network -bound work without every module having to hand-roll
 its own thread pool, batching logic, and backpressure.
 
+The contract of nam projects is: the modules must never access each others' files directly, but instead establish a HTTP contract by which they communicate. 
+This allows each module to remain independent and for projects to be sharded into separate projects without breaking the application. 
+The use of Python and React also ensures a cloud-friendly, modern approach for the application's design.
+
 ## Project layout
 
 A nam project is a directory that looks like this:
