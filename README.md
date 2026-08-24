@@ -230,7 +230,7 @@ pytest
 ## Experimental / Partial
 This is a partial release of what was internal tooling. 
 Most of the unit tests were not included, and most documentation has been stripped 
-until investigated and adjusted thoroughly. 
+until investigated thoroughly and adjusted accordingly. 
 
 As this release is missing most of the test suite it should be considered NOT safe 
 for production. 
