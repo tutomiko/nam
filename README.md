@@ -57,7 +57,7 @@ Each module lives in `modules/<id>/` and needs a `module.yaml`:
 
 ```yaml
 name: My Module
-type: site       # "site" modules appear in navigation, other types are backend-only
+type: site
 icon: layout-template
 ```
 
