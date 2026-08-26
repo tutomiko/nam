@@ -2,6 +2,8 @@ fastapi
 uvicorn
 pyyaml
 starlette
+torch
+numpy
 
 # dev / test
 pytest
