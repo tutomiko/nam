@@ -64,12 +64,21 @@ def load_global_routes_into_app(app: FastAPI, project: Project) -> None:
         print(f"Error loading app.py: {e}")
 
 
-def load_modules_into_app(app: FastAPI, project: Project, serve_app_html) -> LoadedModules:
+def load_modules_into_app(app: FastAPI, project: Project, serve_app_html, included_module_ids: frozenset[str] | None = None) -> LoadedModules:
+    """
+    included_module_ids, when given, restricts mounting to a single
+    build's "include" list (see nam.build.load_build) - modules this
+    process doesn't own are reached at runtime via Router.get_hostname()
+    instead of being mounted here. None (the default) mounts every
+    discovered module, i.e. an un-sharded, whole-project launch.
+    """
     ensure_project_importable(project)
 
     result = LoadedModules()
 
     for module in discover_module_specs(project.modules_dir):
+        if included_module_ids is not None and module.id not in included_module_ids:
+            continue
         try:
             result.mounted.append(module.to_nav_entry())
 
