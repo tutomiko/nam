@@ -41,11 +41,18 @@ def _build_command(entry_point: Path, out_file: Path, shared_dir: Path) -> str:
     )
 
 
-def hash_frontend_sources(frontend_dir: Path) -> str:
-    digest = hashlib.sha256()
-    for source_file in sorted(p for p in frontend_dir.rglob("*") if p.is_file()):
-        digest.update(str(source_file.relative_to(frontend_dir)).encode())
+def _hash_dir_into(digest, root_dir: Path, label: str):
+    for source_file in sorted(p for p in root_dir.rglob("*") if p.is_file()):
+        digest.update(label.encode())
+        digest.update(str(source_file.relative_to(root_dir)).encode())
         digest.update(source_file.read_bytes())
+
+
+def hash_frontend_sources(frontend_dir: Path, shared_dir: Path | None = None) -> str:
+    digest = hashlib.sha256()
+    _hash_dir_into(digest, frontend_dir, "frontend")
+    if shared_dir is not None and shared_dir.exists():
+        _hash_dir_into(digest, shared_dir, "shared")
     return digest.hexdigest()
 
 
@@ -70,7 +77,7 @@ def run_build(entry_point: Path, out_file: Path, shared_dir: Path, cwd: Path, mo
 
 
 def build_if_changed(entry_point: Path, out_file: Path, hash_file: Path, shared_dir: Path, cwd: Path, frontend_dir: Path, module_name: str) -> str:
-    current_hash = hash_frontend_sources(frontend_dir)
+    current_hash = hash_frontend_sources(frontend_dir, shared_dir)
     recorded_hash = _read_recorded_hash(hash_file)
 
     if out_file.exists() and current_hash == recorded_hash:
@@ -96,7 +103,7 @@ class _WatchedModule:
 def supervise_watch(watched_modules: list[_WatchedModule], shared_dir: Path, cwd: Path, stop_event: threading.Event):
     while not stop_event.wait(POLL_INTERVAL_SECONDS):
         for watched in watched_modules:
-            current_hash = hash_frontend_sources(watched.module.frontend_dir)
+            current_hash = hash_frontend_sources(watched.module.frontend_dir, shared_dir)
             if current_hash == watched.source_hash:
                 continue
 
