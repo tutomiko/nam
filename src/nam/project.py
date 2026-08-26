@@ -31,6 +31,7 @@ class Project:
     bundles_dir: Path
     data_dir: Path
     env_data_dir: Path
+    build_name: Optional[str] = None
 
     @property
     def config_path(self) -> Path:
@@ -39,6 +40,10 @@ class Project:
     @property
     def global_routes_path(self) -> Path:
         return self.root / "app.py"
+
+    @property
+    def builds_path(self) -> Path:
+        return self.root / "builds.yaml"
 
 
 def _load_config(root: Path) -> dict:
@@ -98,7 +103,7 @@ def sync_data_directory(src: Path, dst: Path):
                 shutil.copy2(src_item, dst_item)
 
 
-def load_project(project_path: str | Path) -> Project:
+def load_project(project_path: str | Path, build_name: Optional[str] = None) -> Project:
     root = Path(project_path).resolve()
     config = _load_config(root)
     environment_name = config.get("environment") or root.name
@@ -127,6 +132,7 @@ def load_project(project_path: str | Path) -> Project:
         bundles_dir=root / "bundles",
         data_dir=data_dir,
         env_data_dir=env_data_dir,
+        build_name=build_name,
     )
 
 
