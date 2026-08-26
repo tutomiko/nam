@@ -7,6 +7,12 @@ from typing import Optional
 
 DEFAULT_MODULE_TYPE = "site"
 
+# Modules start in this order: services first (so sites/tools that depend
+# on a running service - e.g. a DB connection or background worker opened
+# at import time - never race against it), then sites, then tools.
+# Anything with a type not listed here starts last, after tools.
+STARTUP_ORDER = ("service", "site", "tool")
+
 
 @dataclass
 class ModuleSpec:
@@ -35,6 +41,13 @@ class ModuleSpec:
         return entry
 
 
+def _startup_priority(module_type: str) -> int:
+    try:
+        return STARTUP_ORDER.index(module_type)
+    except ValueError:
+        return len(STARTUP_ORDER)
+
+
 def discover_module_specs(modules_dir: Path) -> list[ModuleSpec]:
     if not modules_dir.exists():
         return []
@@ -61,4 +74,7 @@ def discover_module_specs(modules_dir: Path) -> list[ModuleSpec]:
             )
         )
 
+    # Stable sort: within the same type, modules keep the alphabetical
+    # order they were discovered in above.
+    specs.sort(key=lambda spec: _startup_priority(spec.type))
     return specs
