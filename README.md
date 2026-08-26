@@ -388,6 +388,8 @@ until investigated thoroughly and adjusted accordingly.
 As this release is missing most of the test suite it should be considered NOT safe 
 for production. 
 
+I know there's like, two bugs in there somewhere. Under some rock - or should I say... a monolith?
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
