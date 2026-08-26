@@ -13,6 +13,11 @@ The contract of nam projects is: the modules must never access each others' file
 This allows each module to remain independent and for a single project to be **sharded** across multiple processes - possibly on different machines - without changing any module code. See [Sharding](#sharding) below.
 The use of Python and React also ensures a cloud-friendly, modern approach for the application's design.
 
+## Why does it exist?
+The purpose of nam is to make complex, modular, distributed web services faster to develop, deploy, and maintain. Its cross-backend inference acceleration and concurrency orchestration aren't only intended to make production services fast, but to also make their development and testing faster.
+
+nam is engineered explicitly for modern AI workloads, where heterogeneous compute, heavy batching, and modular isolation are first-class requirements.
+
 ## Project layout
 
 A nam project is a directory that looks like this:
