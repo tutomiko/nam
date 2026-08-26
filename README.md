@@ -56,7 +56,6 @@ parallellism: auto        # worker count for the concurrency executor, or an int
 optimization: throughput  # passed through to your own module code
 reload: true               # gates both the Python reloader and the frontend watcher
 port: 8000                 # can be overridden with --port
-accelerate_inference: false  # if true, eligible torch models are exported/compiled and run accelerated
 ```
 
 ### Modules
@@ -307,8 +306,10 @@ backlog state held by `contiguous` layers.
 ## Inference
 
 `nam.inference` lets module code write plain PyTorch and transparently get
-device resolution, accelerated compilation, and batch handling underneath -
-without calling any nam-specific API.
+device resolution and batch handling underneath - without calling any
+nam-specific API for the basic case. Accelerated export/compilation is
+available too, as an opt-in call (see below) rather than something that
+happens automatically.
 
 ```python
 import torch.nn as nn
@@ -327,32 +328,25 @@ route through nam's inference stack automatically.
 
 ### Device resolution (`nam.inference.device`)
 
-When `accelerate_inference` is off (the default), models still run through
-`Device.auto()`, which resolves the best available torch backend in
-priority order: CUDA, then torch-directml, then CPU. torch-directml is
-detected at runtime (`importlib.util.find_spec`) and is never required in
-`requirements.txt` - most machines have CUDA and shouldn't need it. When
-torch-directml is in use, `nam.inference.device` also patches known
-operator gaps (pin_memory, a handful of missing ATen ops, autocast) once,
-so the rest of the codebase can treat a DirectML device like any other
-torch device.
+Models run through `Device.auto()`, which resolves the best available torch
+backend in priority order: CUDA, then torch-directml, then CPU.
+torch-directml is detected at runtime (`importlib.util.find_spec`) and is
+never required in `requirements.txt` - most machines have CUDA and
+shouldn't need it. When torch-directml is in use, `nam.inference.device`
+also patches known operator gaps (pin_memory, a handful of missing ATen
+ops, autocast) once, so the rest of the codebase can treat a DirectML
+device like any other torch device.
 
-### Accelerated export (`nam.inference.model_exporter`, `hook`)
+### Accelerated export (`nam.inference.model_exporter`)
 
-When `accelerate_inference: true` is set, the first real call to a given
-model kicks off a background export: PyTorch -> ONNX -> a compiled,
-pooled OpenVINO model, saved under the project's `weights/` directory.
-OpenVINO itself follows the same "check if installed, don't require it"
-pattern as torch-directml - it's not in `requirements.txt`.
-
-This export runs on nam's shared executor (the same one
-`OrchestrationPipeline` uses), so it never blocks inference. Every call
-made before the export finishes - including the call that triggered it -
-runs on the plain `Device.auto()` path instead. Once the export succeeds,
-later calls transparently switch to the compiled model. If the export or
-compile step fails for any reason, a highly visible warning is logged and
-the model keeps serving from the `Device.auto()` path indefinitely - a
-failed export never crashes the app or blocks inference.
+`nam.inference.model_exporter` is an opt-in helper for module authors who
+want a model compiled rather than run eagerly: `export_pytorch_module_to_onnx`
+takes a plain PyTorch module to ONNX, and `export_and_compile` compiles that
+ONNX graph into a pooled, accelerated OpenVINO model. OpenVINO follows the
+same "check if installed, don't require it" pattern as torch-directml -
+it's not in `requirements.txt`. Nothing calls this automatically; it's not
+gated by any project.yaml key - a module's own code decides when (or
+whether) to export and switch a given model over to the compiled path.
 
 Pool sizes for compiled models are always set to
 `nam.concurrency.get_parallellism()` - the same worker count as the shared
