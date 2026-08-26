@@ -9,9 +9,12 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from nam import concurrency
 from nam import module_loader
+from nam.build import BuildConfig, load_build
+from nam.inference import hook as inference_hook
 from nam.module import discover_module_specs
 from nam.project import Project, activate_project
 from nam.project_loader import load_modules_into_app
+from nam.router import Router, build_router, set_active_router
 
 APP_HTML_PATH = Path(__file__).parent / "app.html"
 
@@ -27,6 +30,24 @@ def _serve_app_html():
     return FileResponse(str(APP_HTML_PATH))
 
 
+def _resolve_router(project: Project) -> Router:
+    """
+    Every build gets a Router, even an un-sharded, no -build-flag launch:
+    in that case every discovered module is implicitly "included" (the
+    whole project runs in this one process, same as before builds.yaml
+    existed), so Router.get_hostname() still answers correctly for
+    module-to-module calls without those calls needing to know whether
+    they're running inside a shard or a monolith.
+    """
+    if project.build_name is not None:
+        build = load_build(project.root, project.build_name)
+    else:
+        all_module_ids = [spec.id for spec in discover_module_specs(project.modules_dir)]
+        build = BuildConfig(name="__monolith__", optimization=None, include=all_module_ids, reference={})
+
+    return build_router(build, host="0.0.0.0", port=project.port)
+
+
 def create_app(project: Project) -> FastAPI:
     activate_project(project)
 
@@ -35,8 +56,17 @@ def create_app(project: Project) -> FastAPI:
     project.weights_dir.mkdir(parents=True, exist_ok=True)
     project.bundles_dir.mkdir(parents=True, exist_ok=True)
 
+    inference_hook.install(project)
+
+    router = _resolve_router(project)
+    set_active_router(router)
+
+    active_modules = discover_module_specs(project.modules_dir)
+    if project.build_name is not None:
+        active_modules = [spec for spec in active_modules if spec.id in router.included_modules]
+
     module_loader.rebuild_stale_bundles(
-        modules=discover_module_specs(project.modules_dir),
+        modules=active_modules,
         bundles_dir=project.bundles_dir,
         shared_dir=project.shared_dir,
         cwd=project.root,
@@ -60,8 +90,10 @@ def create_app(project: Project) -> FastAPI:
     app.mount("/bundles", StaticFiles(directory=str(project.bundles_dir)), name="bundles")
 
     app.state.app_html_path = APP_HTML_PATH
+    app.state.router = router
 
-    loaded = load_modules_into_app(app, project, _serve_app_html)
+    included_module_ids = router.included_modules if project.build_name is not None else None
+    loaded = load_modules_into_app(app, project, _serve_app_html, included_module_ids=included_module_ids)
     app.state.mounted_modules = loaded.mounted
     app.state.project = project
 
