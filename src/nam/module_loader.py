@@ -41,8 +41,17 @@ def _build_command(entry_point: Path, out_file: Path, shared_dir: Path) -> str:
     )
 
 
+HASH_EXCLUDED_DIR_NAMES = {"node_modules", ".git", "__pycache__", ".cache"}
+FRONTEND_SOURCE_EXTENSIONS = {".js", ".jsx", ".ts", ".tsx", ".css", ".html", ".json"}
+
+
 def _hash_dir_into(digest, root_dir: Path, label: str):
     for source_file in sorted(p for p in root_dir.rglob("*") if p.is_file()):
+        relative_parts = source_file.relative_to(root_dir).parts
+        if HASH_EXCLUDED_DIR_NAMES.intersection(relative_parts):
+            continue
+        if source_file.suffix not in FRONTEND_SOURCE_EXTENSIONS:
+            continue
         digest.update(label.encode())
         digest.update(str(source_file.relative_to(root_dir)).encode())
         digest.update(source_file.read_bytes())
