@@ -2,8 +2,7 @@
 
 NAM PROJECT DEVELOPMENT SKILL
 (How to build modules/projects on top of the "nam" framework. This is a
-usage manual, not a nam-internals doc. You are building a PROJECT that
-runs on nam, not modifying nam itself.)
+usage manual, not a nam-internals doc. 
 
 SOURCE: https://github.com/tutomiko/nam
 
