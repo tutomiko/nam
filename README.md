@@ -339,8 +339,8 @@ route through nam's inference stack automatically.
 
 Do note that the accelerated inference applies to individual blocks as well, 
 so methods like DINOv2's 'forward_features(...)' still get GPU acceleration 
-despite not calling eval/__call__, since the blocks themselves are invoked 
-via __call__. 
+despite not calling `nn.Module.eval()`/`__call__()`, since the blocks themselves are invoked 
+via `nn.Module.__call__()`. 
 
 Tested and confirmed working on:
 - DINOv2/DINOv3
@@ -359,8 +359,8 @@ you might encounter an OOM. This is not an implementation fault,
 this means that you didn't batch properly given the resources you have. 
 If this is happening and you're unwilling to separate it into 
 proper, digestible batches, then gracefully request CPU. 
-Integrated GPUs have this issue and it's something nam shouldn't, 
-and thus won't, touch.
+Integrated GPUs have this feature/issue (they're not intended for running AI models) 
+and it's something nam shouldn't, and thus won't, touch.
 
 ### Device resolution (`nam.inference.device`)
 
