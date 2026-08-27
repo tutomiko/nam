@@ -352,7 +352,7 @@ Tested and confirmed working on:
 
 WARNING:
 If you're running on a machine with an integrated GPU, there's no 
-separate VRAM - there's just the shared SRAM. 
+separate VRAM - there's just the shared system RAM. 
 This means that if your PyTorch inference is a massive batch 
 dumped to CPU/CUDA, and the inference gets accelerated by DirectML, 
 you might encounter an OOM. This is not an implementation fault, 
