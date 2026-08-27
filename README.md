@@ -337,6 +337,19 @@ That's it. `nam.inference.hook` patches `nn.Module.eval()`/`__call__()` at
 server startup (see `create_app` in `server.py`), so every module's models
 route through nam's inference stack automatically.
 
+Do note that the accelerated inference applies to individual blocks as well, 
+so methods like DINOv2's 'forward_features(...)' still get GPU acceleration 
+despite not calling eval/__call__, since the blocks themselves are invoked 
+via __call__. 
+
+Tested and confirmed working on:
+- DINOv2/DINOv3
+- Mask2Former
+- DepthAnythingV2/DepthAnythingV3
+- PWCNet
+- MiDAS
+- SAM2
+
 ### Device resolution (`nam.inference.device`)
 
 Models run through `Device.auto()`, which resolves the best available torch
