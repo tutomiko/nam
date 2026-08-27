@@ -2,7 +2,7 @@
 
 Not Another Monolith: a modular runtime architecture for AI workloads.
 
-nam is a modular platform for building and serving AI workloads. A nam
+nam is a modular runtime for building and serving AI workloads. A nam
 project is a set of self-contained modules, each with its own backend routes
 and (optional) frontend bundle, mounted under a single FastAPI server. At the core of
 nam is `nam.concurrency`, a batching orchestrator built for running
