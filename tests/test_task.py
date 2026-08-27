@@ -4,9 +4,13 @@ from nam.concurrency.orchestrator import OrchestrationFrame, Task
 class RecordingLayer:
     def __init__(self):
         self.on_task_ready_calls = []
+        self.on_task_discard_calls = []
 
     def _on_task_ready(self, batch):
         self.on_task_ready_calls.append(batch)
+
+    def _on_task_discard(self, batch):
+        self.on_task_discard_calls.append(batch)
 
 
 def make_frames(count):
@@ -65,7 +69,7 @@ def test_ready_ignores_frames_not_in_original_batch():
     assert layer.on_task_ready_calls == [[frames[0]]]
 
 
-def test_ready_is_idempotent_second_call_is_noop():
+def test_ready_streams_only_not_yet_resolved_frames_on_later_calls():
     layer = RecordingLayer()
     frames = make_frames(3)
     task = Task(layer, owner=None, batch=frames)
@@ -74,7 +78,17 @@ def test_ready_is_idempotent_second_call_is_noop():
     task.ready(frames)
     task.ready()
 
-    assert layer.on_task_ready_calls == [[frames[0]]]
+    assert layer.on_task_ready_calls == [[frames[0]], [frames[1], frames[2]]]
+
+
+def test_ready_with_single_frame_forwards_single_element_batch():
+    layer = RecordingLayer()
+    frames = make_frames(3)
+    task = Task(layer, owner=None, batch=frames)
+
+    task.ready(frames[1])
+
+    assert layer.on_task_ready_calls == [[frames[1]]]
 
 
 def test_abort_discards_everything_and_never_calls_on_task_ready():
