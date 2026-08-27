@@ -6,18 +6,23 @@ from nam.concurrency.orchestrator import OrchestrationFrame, Task
 class RecordingLayer:
     def __init__(self):
         self.on_task_ready_calls = []
+        self.on_task_discard_calls = []
         self._lock = threading.Lock()
 
     def _on_task_ready(self, batch):
         with self._lock:
             self.on_task_ready_calls.append(batch)
 
+    def _on_task_discard(self, batch):
+        with self._lock:
+            self.on_task_discard_calls.append(batch)
+
 
 def make_frames(count):
     return [OrchestrationFrame(owner=None, last_frame=None, index=i, userdata=i) for i in range(count)]
 
 
-def test_concurrent_ready_calls_only_one_settles():
+def test_concurrent_ready_calls_each_frame_forwarded_exactly_once():
     layer = RecordingLayer()
     frames = make_frames(20)
     task = Task(layer, owner=None, batch=frames)
@@ -34,10 +39,12 @@ def test_concurrent_ready_calls_only_one_settles():
     for t in threads:
         t.join()
 
-    assert len(layer.on_task_ready_calls) == 1
+    forwarded = [f for batch in layer.on_task_ready_calls for f in batch]
+    assert sorted(forwarded, key=lambda f: f.index) == frames[:10]
+    assert len(forwarded) == 10
 
 
-def test_concurrent_ready_and_abort_only_one_settles():
+def test_concurrent_ready_and_abort_never_double_forwards_a_frame():
     layer = RecordingLayer()
     frames = make_frames(20)
     task = Task(layer, owner=None, batch=frames)
@@ -62,4 +69,8 @@ def test_concurrent_ready_and_abort_only_one_settles():
     t1.join()
     t2.join()
 
-    assert len(layer.on_task_ready_calls) <= 1
+    readied = [f for batch in layer.on_task_ready_calls for f in batch]
+    discarded = [f for batch in layer.on_task_discard_calls for f in batch]
+
+    assert set(readied).isdisjoint(discarded)
+    assert sorted(readied + discarded, key=lambda f: f.index) == frames
