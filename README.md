@@ -350,6 +350,18 @@ Tested and confirmed working on:
 - MiDAS
 - SAM2
 
+WARNING:
+If you're running on a machine with an integrated GPU, there's no 
+separate VRAM - there's just the shared SRAM. 
+This means that if your PyTorch inference is a massive batch 
+dumped to CPU/CUDA, and the inference gets accelerated by DirectML, 
+you might encounter an OOM. This is not an implementation fault, 
+this means that you didn't batch properly given the resources you have. 
+If this is happening and you're unwilling to separate it into 
+proper, digestible batches, then gracefully request CPU. 
+Integrated GPUs have this issue and it's something nam shouldn't, 
+and thus won't, touch.
+
 ### Device resolution (`nam.inference.device`)
 
 Models run through `Device.auto()`, which resolves the best available torch
