@@ -1,6 +1,6 @@
 # nam
 
-Not Another Monolith: a modular platform architecture for AI workloads.
+Not Another Monolith: a modular runtime architecture for AI workloads.
 
 nam is a modular platform for building and serving AI workloads. A nam
 project is a set of self-contained modules, each with its own backend routes
