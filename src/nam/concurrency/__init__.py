@@ -29,6 +29,7 @@ __all__ = [
     "OrchestrationPipeline",
     "OrchestrationLayer",
     "OrchestrationFrame",
+    "OrchestrationClient",
     "executor",
     "initialize",
     "get_parallellism",
@@ -58,12 +59,13 @@ def initialize(executor_count: int | None = None) -> None:
     # time, so it can only be imported for the first time once that
     # executor already exists - hence the import lives here, after the
     # executor is guaranteed to be set up, rather than at module top-level.
-    global Orchestrator, OrchestrationPipeline, OrchestrationLayer, OrchestrationFrame
+    global Orchestrator, OrchestrationPipeline, OrchestrationLayer, OrchestrationFrame, OrchestrationClient
     from .orchestrator import (
         Orchestrator,
         OrchestrationPipeline,
         OrchestrationLayer,
         OrchestrationFrame,
+        OrchestrationClient,
     )
 
 
