@@ -359,7 +359,7 @@ you might encounter an OOM. This is not an implementation fault,
 this means that you didn't batch properly given the resources you have. 
 If this is happening and you're unwilling to separate it into 
 proper, digestible batches, then gracefully request CPU. 
-Integrated GPUs have this feature/issue (they're not intended for running AI models) 
+Integrated GPUs have this feature/issue (they're quite suboptimal for running heavy, batched AI models) 
 and it's something nam shouldn't, and thus won't, touch.
 
 ### Device resolution (`nam.inference.device`)
