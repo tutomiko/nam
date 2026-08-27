@@ -1,6 +1,6 @@
-# DEVELOPMENT_SKILL.md
+# DEVELOPMENT_MANUAL.md
 
-NAM PROJECT DEVELOPMENT SKILL
+NAM PROJECT DEVELOPMENT MANUAL
 (How to build modules/projects on top of the "nam" framework. This is a
 usage manual, not a nam-internals doc. 
 
