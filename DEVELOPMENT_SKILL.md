@@ -6,9 +6,9 @@ usage manual, not a nam-internals doc.
 
 SOURCE: https://github.com/tutomiko/nam
 
-================================================================================
+_______________________
 0. IMPORTANT
-================================================================================
+_______________________
 NAM IS ASYNC/CONCURRENT-FIRST ARCHITECTURE BUILT AROUND A SHARED THREAD POOL
 AND A PIPELINE ORCHESTRATOR. DO NOT ROLL YOUR OWN THREADING.
 
@@ -36,9 +36,9 @@ AND A PIPELINE ORCHESTRATOR. DO NOT ROLL YOUR OWN THREADING.
   "delay a callback" API exposed to project code, so if you need that,
   ask before building it rather than reaching for threading.Timer.
 
-================================================================================
+_______________________
 1. WHAT NAM IS, FROM A PROJECT'S POV
-================================================================================
+_______________________
 nam ("Not Another Monolith") is a framework that runs a FastAPI app made
 of independently-developed "modules." Each module contributes:
   - a backend (FastAPI router, mounted at /<module_id>/...)
@@ -58,9 +58,9 @@ purely structural — nam discovers it by directory shape, not by type:
   - optionally a frontend/ entry file
 That's the entire contract.
 
-================================================================================
+_______________________
 2. PROJECT LAYOUT (what to create / where things live)
-================================================================================
+_______________________
 <project_root>/
   project.yaml          project-level config (see section 2a)
   builds.yaml            OPTIONAL - splits project into multiple deployable
@@ -136,9 +136,9 @@ That's the entire contract.
 A module is only "discovered" (and thus mounted) if BOTH module.yaml AND
 backend/routes.py exist. No routes.py = silently skipped.
 
-================================================================================
+_______________________
 3. THE ORCHESTRATOR — THE CORE CONCURRENCY PRIMITIVE
-================================================================================
+_______________________
 Import: `from nam.concurrency import OrchestrationPipeline, OrchestrationClient, Orchestrator`
 (also available: Executor, Future, detect_cpu_count, initialize,
 get_parallellism — but initialize() is called once by nam's own server
@@ -273,9 +273,9 @@ RULES OF THUMB:
   as each call names disjoint frames from the batch, from any thread,
   until every frame is claimed.
 
-================================================================================
+_______________________
 4. MODULE-TO-MODULE COMMUNICATION — USE THE ROUTER, NEVER HARDCODE URLS
-================================================================================
+_______________________
 Modules may run in the SAME process or a DIFFERENT process (see builds.yaml,
 section 6) depending on deployment. Never hardcode another module's host/
 port or assume it's local.
@@ -295,9 +295,9 @@ Inside a request handler, the router is also on `request.app.state.router`
 if you already have the request object; get_active_router() is for code
 that runs outside a request (module-import-time setup, background jobs).
 
-================================================================================
+_______________________
 5. ML / INFERENCE MODULES (torch)
-================================================================================
+_______________________
 nam globally patches torch so device placement "just works" without you
 manually branching on cuda/directml/cpu availability:
 
@@ -359,9 +359,9 @@ if you need concurrency/batching across many callers (min_batch/
 max_batch on that layer IS your batching strategy — don't build a
 separate manual batcher).
 
-================================================================================
+_______________________
 6. builds.yaml — SHARDING A PROJECT ACROSS PROCESSES (optional, project-level)
-================================================================================
+_______________________
 Only needed if you're deploying a project as multiple separate processes
 (e.g. a web-facing build + a heavy-inference worker build). Format:
 
@@ -380,9 +380,9 @@ A module id absent from BOTH include and reference in the active build's
 config is a hard configuration error the first time something tries to
 resolve it via the router — fix builds.yaml, don't work around it in code.
 
-================================================================================
+_______________________
 7. DO / DON'T CHEAT SHEET
-================================================================================
+_______________________
 DO:
   - Put per-module backend logic in modules/<id>/backend/routes.py with a
     top-level `router`.
@@ -415,9 +415,9 @@ DON'T:
   - Don't skip module.yaml or backend/routes.py — a module missing either
     is silently NOT mounted (no error, just absent).
 
-================================================================================
+_______________________
 8. QUICK-REFERENCE: MINIMAL NEW MODULE
-================================================================================
+_______________________
 modules/mymod/module.yaml:
     name: My Module
     type: site
