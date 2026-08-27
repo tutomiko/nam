@@ -90,7 +90,11 @@ navigation endpoint or a custom root redirect. It's mounted unprefixed.
 
 `shared/src` is put on the Python path, so backend code across modules can
 import shared library code directly. `shared/com` is aliased to `@shared` in
-the frontend bundler, for shared React components.
+the frontend bundler, for shared React components. 
+
+Ideally, shared code and components should be things specific to none of the modules, 
+and contain only things that might warrant a library/libraries of their own.
+Otherwise, you might risk turning the shared region into a monolith itself.
 
 ## Sharding
 
