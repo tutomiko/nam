@@ -45,6 +45,68 @@ def test_sync_handler_returning_subset_discards_the_rest(pipeline, make_orchestr
     assert sorted(received) == [0, 2, 4, 6, 8]
 
 
+def test_on_ready_receives_batches_for_frames_that_reach_finish(pipeline, make_orchestrator):
+    def layer1_handler(owner, task, batch):
+        return None
+
+    pipeline.add_layer(role="cpu", handler=layer1_handler)
+    pipeline.finish()
+
+    orch = make_orchestrator()
+    ready_batches = []
+    orch.on_ready(lambda batch: ready_batches.append(batch))
+    orch.feed(list(range(6)))
+
+    assert wait_until(lambda: sum(len(b) for b in ready_batches) == 6)
+    seen = sorted(f.index for b in ready_batches for f in b)
+    assert seen == [0, 1, 2, 3, 4, 5]
+    assert all(isinstance(b, list) for b in ready_batches)
+
+
+def test_on_discard_receives_frames_dropped_via_task_discard(pipeline, make_orchestrator):
+    def layer1_handler(owner, task, batch):
+        keep = [f for f in batch if f.userdata < 3]
+        drop = [f for f in batch if f.userdata >= 3]
+        task.ready(keep)
+        if drop:
+            task.discard(drop)
+
+    pipeline.add_layer(role="cpu", handler=layer1_handler)
+    pipeline.finish()
+
+    orch = make_orchestrator()
+    ready_batches = []
+    discard_batches = []
+    orch.on_ready(lambda batch: ready_batches.append(batch))
+    orch.on_discard(lambda batch: discard_batches.append(batch))
+    orch.feed(list(range(6)))
+
+    assert wait_until(
+        lambda: sum(len(b) for b in ready_batches) + sum(len(b) for b in discard_batches) == 6
+    )
+    readied = sorted(f.index for b in ready_batches for f in b)
+    discarded = sorted(f.userdata for b in discard_batches for f in b)
+    assert readied == [0, 1, 2]
+    assert discarded == [3, 4, 5]
+    assert all(isinstance(b, list) for b in discard_batches)
+
+
+def test_on_discard_receives_frames_dropped_via_task_abort(pipeline, make_orchestrator):
+    def layer1_handler(owner, task, batch):
+        task.abort()
+
+    pipeline.add_layer(role="cpu", handler=layer1_handler)
+    pipeline.finish()
+
+    orch = make_orchestrator()
+    discard_batches = []
+    orch.on_discard(lambda batch: discard_batches.append(batch))
+    orch.feed(list(range(4)))
+
+    assert wait_until(lambda: sum(len(b) for b in discard_batches) == 4)
+    assert sorted(f.userdata for b in discard_batches for f in b) == [0, 1, 2, 3]
+
+
 def test_sync_handler_returning_empty_list_discards_everything(pipeline, make_orchestrator):
     received = []
 
