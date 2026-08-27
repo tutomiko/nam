@@ -134,12 +134,36 @@ class OrchestrationFrame:
 
 
 class Task:
+    """Represents one pending resolution of a batch as it passes through a
+    layer. A task can be resolved two ways:
+
+    - Single-shot (the historical behavior): the handler calls ready(),
+      ready(subset), or abort() exactly once before returning. Whatever
+      wasn't explicitly named is silently dropped, matching the original
+      "return value / one ready() call" contract.
+    - Streaming: the handler (typically an async one) calls ready(frame)
+      and/or discard(frame) repeatedly, from any thread, as individual
+      frames finish - each call reports only the frames it names, and the
+      task is fully resolved once every frame in the batch has been
+      claimed by some ready() or discard() call.
+
+    The first call of either kind still blocks the layer's return-value
+    fallback (_settle_once), matching the pre-existing single-shot
+    contract; later streaming calls simply keep draining _remaining.
+    """
+
     def __init__(self, layer, owner, batch):
         self._layer = layer
         self._owner = owner
         self._batch = batch
         self._settle_lock = threading.Lock()
         self._settled = False
+        self._remaining = set(batch)
+
+    def _as_frame_list(self, frame_or_batch):
+        if isinstance(frame_or_batch, OrchestrationFrame):
+            return [frame_or_batch]
+        return list(frame_or_batch)
 
     def _settle_once(self):
         with self._settle_lock:
@@ -148,20 +172,50 @@ class Task:
             self._settled = True
             return True
 
+    def _claim_remaining(self, frames):
+        with self._settle_lock:
+            claimed = set(frames) & self._remaining
+            self._remaining -= claimed
+            return claimed
+
     def ready(self, batch=None):
         if not self._settle_once():
+            if batch is None:
+                return
+            claimed = self._claim_remaining(self._as_frame_list(batch))
+            if not claimed:
+                return
+            self._layer._on_task_ready([f for f in self._batch if f in claimed])
             return
 
         if batch is None:
-            surviving_batch = self._batch
-        else:
-            requested_frames = set(batch)
-            surviving_batch = [f for f in self._batch if f in requested_frames]
+            self._remaining.clear()
+            self._layer._on_task_ready(self._batch)
+            return
 
+        requested_frames = set(self._as_frame_list(batch))
+        self._remaining -= requested_frames
+        surviving_batch = [f for f in self._batch if f in requested_frames]
         self._layer._on_task_ready(surviving_batch)
 
+    def discard(self, batch=None):
+        frames = self._batch if batch is None else self._as_frame_list(batch)
+
+        if not self._settle_once():
+            claimed = self._claim_remaining(frames)
+            if not claimed:
+                return
+            self._layer._on_task_discard([f for f in self._batch if f in claimed])
+            return
+
+        requested_frames = set(frames)
+        self._remaining -= requested_frames
+        discarded_batch = [f for f in self._batch if f in requested_frames]
+        if discarded_batch:
+            self._layer._on_task_discard(discarded_batch)
+
     def abort(self):
-        self._settle_once()
+        self.discard(self._batch)
 
 
 class OrchestrationLayer:
@@ -189,6 +243,46 @@ class OrchestrationLayer:
     def _on_task_ready(self, batch):
         if self._next and len(batch) > 0:
             self._next.push_batch(batch)
+
+    def _on_task_discard(self, batch):
+        if len(batch) == 0:
+            return
+
+        by_orchestrator = {}
+        for f in batch:
+            by_orchestrator.setdefault(f.owner, []).append(f)
+
+        for orchestrator, frames in by_orchestrator.items():
+            orchestrator._handle_discarded(frames)
+
+        self._advance_downstream_backlogs(batch)
+
+    def _advance_downstream_backlogs(self, batch):
+        """A discarded frame never reaches downstream layers, so any
+        downstream layer with contiguous=True would otherwise wait
+        forever for that frame's index before releasing anything after
+        it. Discarding still has to advance those layers' backlogs by
+        the discarded indices, exactly as if the frame had passed
+        through, or every later frame from the same owner stalls
+        permanently once a single frame ahead of it is dropped."""
+        by_owner = {}
+        for f in batch:
+            by_owner.setdefault(f.owner, []).append(f)
+
+        layer = self._next
+        while layer is not None:
+            if layer._contiguous is True:
+                for owner, frames in by_owner.items():
+                    layer._advance_backlog(owner, frames)
+            layer = layer._next
+
+    def _advance_backlog(self, owner, frames):
+        with self._backlog_lock:
+            backlog = self._backlog.get(owner, -1)
+            for f in sorted(frames):
+                if f.index == backlog + 1:
+                    backlog = f.index
+            self._backlog[owner] = backlog
         
     def __str__(self):
         return "L"+str(self._index)
@@ -397,12 +491,13 @@ class OrchestrationPipeline:
     def finish(self):
         def _handler(orchestrator, task, batch):
             try:
+                orchestrator._handle_ready(batch)
+            finally:
                 for f in batch:
                     if not f.last_frame:
                         continue
                     f.last_frame.userdata = None
                     f.last_frame = None
-            finally:
                 orchestrator._tear_window(batch)
             
         self.add_layer(handler=_handler, role='cpu', max_batch=256, contiguous=True)
@@ -421,6 +516,59 @@ class OrchestrationPipeline:
             chain_link = chain_link._next
         
         
+class OrchestrationClient:
+    """Base class for a single caller's use of one shared, module-level
+    OrchestrationPipeline (see DINOv2TiledImageProcessor and
+    ImageProcessor for the pattern this replaces - both hand-rolled this
+    exact Orchestrator setup/on_ready/on_discard/feed/close boilerplate
+    around their own frame type before this existed).
+
+    Subclasses provide _create_frame(index, userdata) to box each fed
+    item into their own frame type, and call on_ready()/on_discarded()
+    to register listeners for, respectively, frames that made it all the
+    way through the pipeline and frames that got dropped anywhere along
+    the way via task.discard()/abort(). Both listeners receive one
+    subclass-boxed frame at a time (whatever _create_frame returned for
+    it), not the underlying OrchestrationFrame and not a batch.
+    """
+
+    def __init__(self, pipeline, max_window):
+        self.orchestrator = Orchestrator(pipeline, max_window)
+        self.orchestrator.userdata = self
+        self.orchestrator.wrapper = self._create_frame
+        self.orchestrator.on_ready(self._on_ready)
+        self.orchestrator.on_discard(self._on_discarded)
+        self._ready_callback = None
+        self._discard_callback = None
+
+    def _create_frame(self, index, userdata):
+        raise NotImplementedError
+
+    def on_ready(self, callback):
+        self._ready_callback = callback
+
+    def on_discarded(self, callback):
+        self._discard_callback = callback
+
+    def _on_ready(self, batch):
+        if self._ready_callback is None:
+            return
+        for f in batch:
+            self._ready_callback(f.userdata)
+
+    def _on_discarded(self, batch):
+        if self._discard_callback is None:
+            return
+        for f in batch:
+            self._discard_callback(f.userdata)
+
+    def feed(self, items):
+        self.orchestrator.feed(items)
+
+    def close(self):
+        self.orchestrator.close()
+
+
 class Orchestrator:
     def __init__(self, pipeline, max_window):
         self._closed = False
@@ -434,7 +582,26 @@ class Orchestrator:
         self.userdata = None
         self.wrapper = None
         self.window_listener = None
-        
+        self._ready_callback = None
+        self._discard_callback = None
+
+    def on_ready(self, callback):
+        self._ready_callback = callback
+
+    def on_discard(self, callback):
+        self._discard_callback = callback
+
+    def _handle_ready(self, batch):
+        if self._ready_callback is not None and len(batch) > 0:
+            self._ready_callback(list(batch))
+
+    def _handle_discarded(self, batch):
+        try:
+            if self._discard_callback is not None and len(batch) > 0:
+                self._discard_callback(list(batch))
+        finally:
+            self._tear_window(batch)
+
     def close(self):
         try:
             self._pipeline.teardown(self)
