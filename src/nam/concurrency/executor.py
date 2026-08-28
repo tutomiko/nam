@@ -1,3 +1,9 @@
+# executor.py
+# 
+# A legacy file that made it into the codebase.
+# Intending to keep the API but replace the internals at some point, soon.
+# I'm aware there's a few bugs here, some of which are critical or very unpredictable.
+
 import threading
 import multiprocessing
 import os
