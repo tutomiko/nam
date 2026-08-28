@@ -1,4 +1,4 @@
-# DEVELOPMENT_MANUAL.md
+# DEV_MANUAL.md
 
 NAM PROJECT DEVELOPMENT MANUAL
 (How to build modules/projects on top of the "nam" framework. This is a
