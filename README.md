@@ -212,7 +212,7 @@ An `OrchestrationPipeline` is a chain of `OrchestrationLayer`s. Each layer
 has a handler, and frames flow from one layer to the next in batches:
 
 ```python
-from nam.concurrency import OrchestrationPipeline, Orchestrator
+from nam.concurrency import OrchestrationPipeline, OrchestrationFrame, OrchestrationClient
 
 pipeline = OrchestrationPipeline(concurrency.executor)
 
@@ -221,12 +221,18 @@ def preprocess(owner, task, batch):
 
 def run_model(owner, task, batch):
     for f in batch:
-        f.userdata = model.predict(f.userdata)
+        f.result = model.predict(f.userdata)
 
 pipeline.add_layer(role="cpu", handler=preprocess)
 pipeline.add_layer(role="gpu", handler=run_model)
 pipeline.finish()
 ```
+
+Note `run_model` sets `f.result` rather than overwriting `f.userdata`:
+`userdata` is whatever you fed in, and handlers generally shouldn't
+clobber it with the output. Define a dedicated attribute (like `result`)
+on your frame subclass for that instead - see the frame/client pattern
+below.
 
 `add_layer` takes:
 
@@ -236,8 +242,8 @@ pipeline.finish()
   a slow GPU layer doesn't starve a fast CPU layer sharing the same executor.
 - `handler(owner, task, batch)`: called with the batch of frames belonging
   to a single owner. `owner` is whichever value you fed in as an
-  `Orchestrator`, `task` is a `Task` for signalling completion, and `batch`
-  is the list of `OrchestrationFrame`s to process.
+  `OrchestrationClient`, `task` is a `Task` for signalling completion, and
+  `batch` is the list of `OrchestrationFrame`s to process.
 - `contiguous`: if `True`, a frame only leaves this layer once every frame
   before it (by index, for the same owner) has already left. Useful for
   layers where output order must match input order.
@@ -267,7 +273,7 @@ def filter_bad_frames(owner, task, batch):
     return [f for f in batch if f.userdata.is_valid]
 ```
 
-### Task.ready() and Task.abort()
+### Tasks
 
 Every handler call gets a `Task`. Calling `task.ready(batch)` explicitly
 does the same job as a return value, but works for asynchronous layers too,
@@ -289,30 +295,76 @@ pipeline.add_layer(role="gpu", handler=dispatch_to_worker, asynchronous=True)
 same as returning `None`. `task.abort()` discards the whole batch, the same
 as `task.ready([])`.
 
-A task only settles once. The first call to `ready()` or `abort()` wins;
-any later call (whether it's another `ready()`, an `abort()`, or a handler
-return value) is ignored. This makes it safe to call `task.ready()` from a
-callback that might fire more than once.
-
-### Orchestrator
-
-`Orchestrator` sits in front of a pipeline and manages a bounded window of
-in-flight work:
+Both `ready()` and `discard()` also accept a single `OrchestrationFrame`
+instead of a batch - useful in asynchronous layers where frames finish one
+at a time rather than all together:
 
 ```python
-orch = Orchestrator(pipeline, max_window=256)
-orch.feed([item_a, item_b, item_c])
+def dispatch_to_worker(owner, task, batch):
+    def on_item_done(frame, result):
+        if result is None:
+            task.discard(frame)
+        else:
+            frame.result = result
+            task.ready(frame)
+
+    for f in batch:
+        worker_pool.submit(f, callback=on_item_done)
+
+pipeline.add_layer(role="gpu", handler=dispatch_to_worker, asynchronous=True)
 ```
 
-Each item you feed becomes an `OrchestrationFrame` and enters the pipeline
-at the first layer. `max_window` caps how many frames can be in flight at
-once; once frames finish (reach the end of the pipeline, added with
-`pipeline.finish()`), room frees up and more queued items are pulled in.
-Set `orch.window_listener` to get called with the remaining free capacity
-whenever frames finish.
+A task settles on its first `ready()`/`discard()`/`abort()` call made
+*without* a specific frame or batch (i.e. resolving the whole task at
+once). After that, further single-frame `ready(frame)`/`discard(frame)`
+calls are still honored as long as they name frames that haven't already
+been claimed - this is what lets a streaming/asynchronous handler resolve
+frames one at a time as they complete, from any thread, without every
+frame needing to be ready simultaneously. Once every frame in the batch
+has been claimed, the task is fully resolved.
 
-Call `orch.close()` when you're done with it, to clear any per-owner
+### OrchestrationClient
+
+`OrchestrationClient` sits in front of a pipeline and manages a bounded
+window of in-flight work for one logical caller. Prefer subclassing it
+over using the lower-level `Orchestrator` directly - see the
+`FirstClient`/`SecondClient` pattern in
+`examples/nested_orchestration.py` for the recommended shape:
+
+```python
+class MyFrame(OrchestrationFrame):
+    def __init__(self, index, userdata):
+        super().__init__(userdata=userdata)
+        self.result = None
+
+class MyClient(OrchestrationClient):
+    def __init__(self):
+        super().__init__(pipeline, max_window=256)
+
+    def _create_frame(self, index, userdata):
+        return MyFrame(index, userdata)
+
+client = MyClient()
+client.on_ready(lambda frame: print(frame.result))
+client.feed([item_a, item_b, item_c])
+```
+
+Each item you feed becomes a frame (via `_create_frame`) and enters the
+pipeline at the first layer. `max_window` caps how many frames can be in
+flight at once; once frames finish (reach the end of the pipeline, added
+with `pipeline.finish()`), room frees up and more queued items are pulled
+in. Register `on_ready`/`on_discarded` callbacks to get frames back one at
+a time as they complete or get dropped, and `on_dispatch` if you need to
+record caller-side context per fed item (see the docstring on
+`OrchestrationClient` for the nested-client use case this is for).
+
+Call `client.close()` when you're done with it, to clear any per-owner
 backlog state held by `contiguous` layers.
+
+The lower-level `Orchestrator(pipeline, max_window)` that `OrchestrationClient`
+wraps is still available directly if you don't need per-item frame
+subclassing, but for most module code the client pattern above is what
+you want.
 
 ## Inference
 
@@ -338,9 +390,9 @@ server startup (see `create_app` in `server.py`), so every module's models
 route through nam's inference stack automatically.
 
 Do note that the accelerated inference applies to individual blocks as well, 
-so methods like DINOv2's 'forward_features(...)' still get GPU acceleration 
-despite not calling `nn.Module.eval()`/`__call__()`, since the blocks themselves are invoked 
-via `nn.Module.__call__()`. 
+so methods like DINOv2's `forward_features()` still get GPU acceleration 
+despite not being direct calls to  `nn.Module.eval()`/`__call__()`, 
+since the blocks themselves are invoked via `nn.Module.__call__()`. 
 
 Tested and confirmed working on:
 - DINOv2/DINOv3
