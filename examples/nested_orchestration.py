@@ -1,6 +1,7 @@
 # nested_orchestration.py
 # 
 # The proper way for an OrchestrationClient to call another OrchestrationClient.
+# As can be observed, we do not roll our own batching, 
 
 from __future__ import annotations
 
@@ -52,21 +53,21 @@ second_pipeline = OrchestrationPipeline(executors)
 
 
 def _cb_second_stage(owner, task, batch):
-    client = FirstClient()
-    pending = {}
+    client = FirstClient() # create the instance to feed to
+    pending = {} # we're using a pending dict so we can map the FirstClient's frames with SecondClient's
 
     def _on_dispatch(first_frame, outer_frame):
         pending[first_frame] = outer_frame
-        return outer_frame.userdata # what FirstClient understands - it would not understand outer_frame, it's not aware of that class.
+        return outer_frame.userdata # return what FirstClient understands - it would not understand outer_frame, it's not aware of that class or its semantics (SecondFrame)
 
     def _on_ready(first_frame, task=task):
         outer_frame = pending.pop(first_frame)
         outer_frame.result = first_frame.result
-        task.ready(outer_frame)
+        task.ready(outer_frame) # the frame gets dispatched to next layer
 
     def _on_discarded(first_frame, task=task):
         outer_frame = pending.pop(first_frame)
-        task.discard(outer_frame)
+        task.discard(outer_frame) # the frame gets discarded
 
     client.on_dispatch(_on_dispatch)
     client.on_ready(_on_ready)
@@ -74,6 +75,9 @@ def _cb_second_stage(owner, task, batch):
     client.feed(batch)
 
 
+# When you're calling another OrchestratorClient from an OrchestratorClient, remember to mark the layer asynchronous=True, 
+# because those frames will be arriving (ready/discard) asynchronously so by the time the handler returns, we won't have anything processed to 
+# return.
 second_pipeline.add_layer(handler=_cb_second_stage, role="cpu", max_batch=32, asynchronous=True)
 second_pipeline.finish()
 
