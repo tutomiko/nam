@@ -60,12 +60,12 @@ def _cb_second_stage(owner, task, batch):
         pending[first_frame] = outer_frame
         return outer_frame.userdata # return what FirstClient understands - it would not understand outer_frame, it's not aware of that class or its semantics (SecondFrame)
 
-    def _on_ready(first_frame, task=task):
+    def _on_ready(first_frame):
         outer_frame = pending.pop(first_frame)
         outer_frame.result = first_frame.result
         task.ready(outer_frame) # the frame gets dispatched to next layer
 
-    def _on_discarded(first_frame, task=task):
+    def _on_discarded(first_frame):
         outer_frame = pending.pop(first_frame)
         task.discard(outer_frame) # the frame gets discarded
 
