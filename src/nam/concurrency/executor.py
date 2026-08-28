@@ -81,8 +81,8 @@ class Executor:
 
             # A very fine implementation indeed. Anyone looking here is probably going to shake their 
             # heads in disgust at this remnant that's busy polling. But it's been working solid for, what, 9 years now? 
-            # I refuse to touch it out of historical significance. Any contributor can switch to the blocking with 
-            # posting to the shutdown signal into the queue. That's gonna get us, what, some microseconds, maybe-ish? Let me know.
+            # I refuse to touch it out of historical significance. Any contributor can switch to blocking + 
+            # posting the shutdown signal into the queue. That's gonna get us, what, some microseconds, maybe-ish? Let me know.
             try:
                 task, args, future = self.queue.get(block=False)
             except queue.Empty:
