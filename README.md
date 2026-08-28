@@ -455,6 +455,8 @@ back. A fixed batch size of 4 called with 5 inputs runs as a chunk of 4
 plus a chunk of 1 padded to 4, discarding the 3 padding rows from that
 second chunk's output.
 
+The reason that the batch size is detected from the first invocation is simple: if you're running inference on a nam project, it expects you to be doing so within an OrchestrationLayer. These have min_batch and max_batch (size) you can adjust. Running the inference on a layer like this ensures that you're utilizing the nam infrastructure effectively, while also keeping the mental model clear: this layer executes batch of the size the layer expects.
+
 ## Starting a new project
 
 Copy the `template/` directory as a starting point. It contains a minimal
