@@ -183,7 +183,7 @@ def test_async_handler_deferred_ready_with_subset(pipeline, make_orchestrator):
     def layer2_handler(owner, task, batch):
         received.extend(f.userdata for f in batch)
 
-    pipeline.add_layer(role="cpu", handler=layer1_handler, async_=True)
+    pipeline.add_layer(role="cpu", handler=layer1_handler, asynchronous=True)
     pipeline.add_layer(role="cpu", handler=layer2_handler)
     pipeline.finish()
 
@@ -208,7 +208,7 @@ def test_async_handler_deferred_abort_discards_everything(pipeline, make_orchest
     def layer2_handler(owner, task, batch):
         received.extend(f.userdata for f in batch)
 
-    pipeline.add_layer(role="cpu", handler=layer1_handler, async_=True)
+    pipeline.add_layer(role="cpu", handler=layer1_handler, asynchronous=True)
     pipeline.add_layer(role="cpu", handler=layer2_handler)
     pipeline.finish()
 
@@ -228,7 +228,7 @@ def test_async_handler_never_calling_ready_never_forwards(pipeline, make_orchest
     def layer2_handler(owner, task, batch):
         received.extend(f.userdata for f in batch)
 
-    pipeline.add_layer(role="cpu", handler=layer1_handler, async_=True)
+    pipeline.add_layer(role="cpu", handler=layer1_handler, asynchronous=True)
     pipeline.add_layer(role="cpu", handler=layer2_handler)
     pipeline.finish()
 
