@@ -1,7 +1,7 @@
 # DEV_MANUAL.md
 
 NAM PROJECT DEVELOPMENT MANUAL
-(How to build modules/projects on top of the "nam" framework. This is a
+How to build modules/projects on top of the "nam" framework. This is a
 usage manual, not a nam-internals doc. 
 
 SOURCE: https://github.com/tutomiko/nam
