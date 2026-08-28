@@ -113,7 +113,7 @@ def _execute_scheduler(yield_after, callback, args=()):
 
 
 class OrchestrationFrame:
-    def __init__(self, owner, last_frame, index, userdata):
+    def __init__(self, owner=None, last_frame=None, index=None, userdata=None):
         self.owner = owner
         self.last_frame = last_frame
         self.index = index
@@ -530,16 +530,27 @@ class OrchestrationClient:
     the way via task.discard()/abort(). Both listeners receive one
     subclass-boxed frame at a time (whatever _create_frame returned for
     it), not the underlying OrchestrationFrame and not a batch.
+
+    Callers that need to record caller-side context per fed item (e.g.
+    which outer frame a fed item belongs to) can use on_dispatch(callback)
+    instead. callback(first_frame, userdata) fires once per frame, right
+    when it's created, with the exact item that was fed for it - the same
+    userdata _create_frame would have received. Its return value becomes
+    the frame's userdata that the pipeline stage sees. This lets the
+    caller build its own mapping (e.g. first_frame -> outer_frame) in the
+    callback's closure, and unwrap/replace userdata down to just the
+    payload the pipeline stage needs, without a second feed() channel.
     """
 
     def __init__(self, pipeline, max_window):
         self.orchestrator = Orchestrator(pipeline, max_window)
         self.orchestrator.userdata = self
-        self.orchestrator.wrapper = self._create_frame
+        self.orchestrator.wrapper = self._wrap_frame
         self.orchestrator.on_ready(self._on_ready)
         self.orchestrator.on_discard(self._on_discarded)
         self._ready_callback = None
         self._discard_callback = None
+        self._dispatch_callback = None
 
     def _create_frame(self, index, userdata):
         raise NotImplementedError
@@ -550,23 +561,38 @@ class OrchestrationClient:
     def on_discarded(self, callback):
         self._discard_callback = callback
 
+    def on_dispatch(self, callback):
+        """callback(first_frame, userdata) is invoked right as each frame
+        is created, before the pipeline stage ever sees it, with the same
+        userdata that was fed for it. Its return value replaces the
+        frame's userdata."""
+        self._dispatch_callback = callback
+
+    def _wrap_frame(self, index, userdata):
+        frame = self._create_frame(index, userdata)
+        if self._dispatch_callback is not None:
+            frame.userdata = self._dispatch_callback(frame, userdata)
+        return frame
+
     def _on_ready(self, batch):
         if self._ready_callback is None:
             return
         for f in batch:
-            self._ready_callback(f.userdata)
+            self._ready_callback(f.userdata if type(f) is OrchestrationFrame else f)
 
     def _on_discarded(self, batch):
         if self._discard_callback is None:
             return
         for f in batch:
-            self._discard_callback(f.userdata)
+            self._discard_callback(f.userdata if type(f) is OrchestrationFrame else f)
 
     def feed(self, items):
         self.orchestrator.feed(items)
 
     def close(self):
         self.orchestrator.close()
+
+
 
 
 class Orchestrator:
@@ -610,8 +636,14 @@ class Orchestrator:
             
     def _create_frame(self, last_frame, index, userdata):
         if self.wrapper:
-            userdata = self.wrapper(index, userdata)
-            
+            wrapped = self.wrapper(index, userdata)
+            if isinstance(wrapped, OrchestrationFrame):
+                wrapped.owner = self
+                wrapped.last_frame = last_frame
+                wrapped.index = index
+                return wrapped
+            userdata = wrapped
+
         return OrchestrationFrame(self, last_frame, index, userdata)
         
     def _pull_window(self):
