@@ -6,6 +6,9 @@ usage manual, not a nam-internals doc.
 
 SOURCE: https://github.com/tutomiko/nam
 
+Please refer to the examples/ files for reference implementations. 
+These help a lot more than this document alone.
+
 _______________________
 0. IMPORTANT
 _______________________
