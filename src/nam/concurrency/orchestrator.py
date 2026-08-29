@@ -307,6 +307,8 @@ class OrchestrationLayer:
         
     def _resolve_sync_handler_result(self, task, source_batch, handler_result):
         if not task._settle_once():
+            if handler_result is not None:
+                self._warn_conflicting_resolution(task, source_batch, handler_result)
             return []
 
         if handler_result is None:
@@ -314,6 +316,39 @@ class OrchestrationLayer:
 
         surviving_frames = set(handler_result)
         return [f for f in source_batch if f in surviving_frames]
+
+    def _warn_conflicting_resolution(self, task, source_batch, handler_result):
+        """The handler both resolved the task manually - via task.ready(),
+        task.discard(), or task.abort() called from inside the handler
+        body - AND returned a non-None value for _resolve_sync_handler_result
+        to apply on top of that. Task._settle_once() only lets the first of
+        those win (whichever ran first: the manual call always wins here,
+        since it necessarily executes before the handler can return), so
+        the second resolution attempt is silently discarded with no
+        indication anything was wrong - unless we say so here.
+
+        This is a bug in the handler itself, not a transient runtime
+        fault: the same handler will hit this on every batch it processes,
+        every time, deterministically, because it's a fixed property of
+        the code the person wrote, not the data. That's a different class
+        of problem from the try/except in _execute_batch, which exists for
+        exceptions the handler wasn't expecting - so this gets flagged
+        loudly and by name rather than folded into that path, where it
+        would look like just another transient handler exception and get
+        missed. It stays a warning rather than an exception because
+        raising here can't undo the manual resolution that already went
+        out (frames from a task.ready() call may already be downstream by
+        the time the handler returns) - crashing on top of an
+        already-partially-resolved task would only compound the damage,
+        not prevent it.
+        """
+        print(
+            f"[Orchestrator] Layer {self} handler {getattr(self._handler, '__name__', self._handler)!r} "
+            f"both resolved its task manually (via task.ready()/discard()/abort()) and returned "
+            f"a value ({len(set(handler_result))} frame(s)) for the same batch of "
+            f"{len(source_batch)} frame(s). The manual resolution already won; the returned "
+            f"value was discarded. Fix the handler to do exactly one of the two."
+        )
 
     def _execute_batch(self, batch):
         batch_proceed = []
