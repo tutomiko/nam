@@ -419,3 +419,95 @@ def test_coroutine_handler_reuses_one_dedicated_loop_across_batches(pipeline, ma
 
     assert wait_until(lambda: len(seen_loop_ids) == 5, timeout=3.0)
     assert len(set(seen_loop_ids)) == 1
+
+
+def test_conflicting_manual_and_return_resolution_warns_and_manual_wins(pipeline, make_orchestrator, capsys):
+    """A handler that both resolves its task manually (task.ready()) and
+    also returns a value is a deterministic bug in that handler, not a
+    transient fault - it will happen on every batch. The manual call must
+    win (it necessarily runs first, before the handler can return), the
+    conflicting return value must be silently discarded rather than
+    double-forwarding or corrupting the batch, and the situation must be
+    surfaced loudly so it doesn't look like everything is fine."""
+    received = []
+
+    def layer1_handler(owner, task, batch):
+        task.ready([f for f in batch if f.userdata < 5])
+        return [f for f in batch if f.userdata >= 5]
+
+    def layer2_handler(owner, task, batch):
+        received.extend(f.userdata for f in batch)
+
+    pipeline.add_layer(role="cpu", handler=layer1_handler, asynchronous=False)
+    pipeline.add_layer(role="cpu", handler=layer2_handler)
+    pipeline.finish()
+
+    orch = make_orchestrator()
+    orch.feed(list(range(10)))
+
+    assert wait_until(lambda: len(received) >= 5, timeout=2.0)
+    time.sleep(0.2)
+    assert sorted(received) == [0, 1, 2, 3, 4]
+
+    captured = capsys.readouterr()
+    assert "[Orchestrator]" in captured.out
+    assert "layer1_handler" in captured.out
+
+
+def test_coroutine_handler_conflicting_resolution_also_warns(pipeline, make_orchestrator, capsys):
+    """Same conflict class as the sync-handler test above, but with an
+    async def handler - the guard lives in _resolve_sync_handler_result,
+    the shared seam both sync and coroutine handlers funnel through, so
+    it isn't coroutine-specific by construction, but it's worth pinning
+    down explicitly rather than assuming."""
+    received = []
+
+    async def layer1_handler(owner, task, batch):
+        task.ready([f for f in batch if f.userdata < 5])
+        return [f for f in batch if f.userdata >= 5]
+
+    def layer2_handler(owner, task, batch):
+        received.extend(f.userdata for f in batch)
+
+    pipeline.add_layer(role="cpu", handler=layer1_handler)
+    pipeline.add_layer(role="cpu", handler=layer2_handler)
+    pipeline.finish()
+
+    orch = make_orchestrator()
+    orch.feed(list(range(10)))
+
+    assert wait_until(lambda: len(received) >= 5, timeout=2.0)
+    time.sleep(0.2)
+    assert sorted(received) == [0, 1, 2, 3, 4]
+
+    captured = capsys.readouterr()
+    assert "[Orchestrator]" in captured.out
+
+
+def test_asynchronous_true_handler_return_value_never_warns(pipeline, make_orchestrator, capsys):
+    """Under asynchronous=True the return value was never part of the
+    contract - _execute_batch returns/continues before ever reaching
+    _resolve_sync_handler_result, by design. A handler returning something
+    here isn't a conflict, it's a value nobody was ever going to look at;
+    warning about it would be noise and would misrepresent what
+    asynchronous=True actually means."""
+    received = []
+
+    def layer1_handler(owner, task, batch):
+        task.ready(batch)
+        return list(batch)  # meaningless under asynchronous=True, must not warn
+
+    def layer2_handler(owner, task, batch):
+        received.extend(f.userdata for f in batch)
+
+    pipeline.add_layer(role="cpu", handler=layer1_handler, asynchronous=True)
+    pipeline.add_layer(role="cpu", handler=layer2_handler)
+    pipeline.finish()
+
+    orch = make_orchestrator()
+    orch.feed(list(range(5)))
+
+    assert wait_until(lambda: len(received) == 5, timeout=2.0)
+
+    captured = capsys.readouterr()
+    assert "[Orchestrator]" not in captured.out
