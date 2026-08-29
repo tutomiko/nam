@@ -4,6 +4,8 @@ import heapq
 import queue
 import traceback
 import atexit
+import asyncio
+import inspect
 
 from nam import concurrency as _concurrency_pkg
 from .load_balancer import LoadBalancer, LoadBalancerSource
@@ -218,6 +220,44 @@ class Task:
         self.discard(self._batch)
 
 
+class _LayerEventLoopThread:
+    """One dedicated, long-lived event loop for a single coroutine-handler
+    OrchestrationLayer, mirroring the _DedicatedScheduler/LoadBalancer
+    pattern already used elsewhere in this file: one background thread per
+    concern, owned by an object, started once, alive for the process's
+    life.
+
+    This exists specifically to avoid asyncio.run()'s per-call loop
+    setup/teardown cost. The alternative of caching a loop on
+    threading.local() was considered and rejected: Executor's worker
+    threads are shared across every LoadBalancerSource in the process
+    (every layer of every pipeline, every load-type partition), so a
+    thread-local loop would be created lazily by whichever layer happens
+    to land on a given thread first, then live forever pinned to that
+    thread with no owner and no close() hook - a leaked event loop per
+    worker thread, invisible until process shutdown. Scoping the loop to
+    the layer instead means exactly one loop per coroutine-handler layer,
+    with a clear owner and place to add a shutdown hook, and zero effect
+    on sync-handler layers, which never construct one of these.
+    """
+
+    def __init__(self):
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(
+            target=self._loop.run_forever, daemon=True, name="OrchestratorLayerEventLoop"
+        )
+        self._thread.start()
+
+    def run(self, coro):
+        # run_coroutine_threadsafe schedules the coroutine on the
+        # already-running loop and hands back a concurrent.futures.Future;
+        # .result() blocks the calling worker thread until it's done,
+        # exactly like asyncio.run() does today - the only change is that
+        # the loop itself is created once, up front, instead of per call.
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result()
+
+
 class OrchestrationLayer:
     def __init__(self, pipeline, executor, index, handler, max_batch, min_batch, contiguous, yield_after, shared, role, is_async=False):
         self._pipeline = pipeline
@@ -226,6 +266,8 @@ class OrchestrationLayer:
         self._executor = executor
         self._index = index
         self._handler = handler
+        self._handler_is_coroutine = inspect.iscoroutinefunction(handler)
+        self._handler_event_loop = _LayerEventLoopThread() if self._handler_is_coroutine else None
         self._next = None
         self._queue = queue.Queue()
         self._queue_max = max_batch
@@ -240,6 +282,20 @@ class OrchestrationLayer:
         self._lb_source = LoadBalancerSource(role)
         
         _LOAD_BALANCER.register(self._lb_source)
+
+    def _invoke_handler(self, *args):
+        result = self._handler(*args)
+        if self._handler_is_coroutine:
+            # Runs on this layer's own dedicated event loop instead of
+            # spinning one up per call. Still blocks the calling worker
+            # thread for the coroutine's whole lifetime, exactly like a
+            # synchronous handler already blocks it; `await` points inside
+            # the handler still yield control within that loop, and any
+            # task.ready()/discard() calls made from inside the coroutine
+            # behave exactly as the streaming contract already documents
+            # for asynchronous=True.
+            return self._handler_event_loop.run(result)
+        return result
 
     def _on_task_ready(self, batch):
         if self._next and len(batch) > 0:
@@ -351,7 +407,7 @@ class OrchestrationLayer:
         if self._shared is True:
             task = Task(self, None, batch)
             try:
-                handler_result = self._handler(self._pipeline, task, batch)
+                handler_result = self._invoke_handler(self._pipeline, task, batch)
                 
                 if self._is_async:
                     return
@@ -368,7 +424,7 @@ class OrchestrationLayer:
                 task = Task(self, batch_owner, batch_aggregate)
                 
                 try:
-                    handler_result = self._handler(batch_owner, task, batch_aggregate)
+                    handler_result = self._invoke_handler(batch_owner, task, batch_aggregate)
                 except Exception as ex:
                     traceback.print_exc()
                     task.abort()
