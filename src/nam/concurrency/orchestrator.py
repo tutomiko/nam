@@ -232,6 +232,7 @@ class OrchestrationLayer:
         self._batch_pending_since = None
         self._batch_pending_lock = threading.Lock()
         self._batch_min = min_batch
+        self._queue_capacity_lock = threading.Lock()
         self._contiguous = contiguous
         self._yield_after = yield_after
         self._shared = shared
@@ -358,6 +359,7 @@ class OrchestrationLayer:
                 batch_proceed = self._resolve_sync_handler_result(task, batch, handler_result)
             except Exception as ex:
                 traceback.print_exc()
+                task.abort()
         else:
             batch_aggregates = self._aggregate_batch_to_owners(batch)
             
@@ -369,6 +371,7 @@ class OrchestrationLayer:
                     handler_result = self._handler(batch_owner, task, batch_aggregate)
                 except Exception as ex:
                     traceback.print_exc()
+                    task.abort()
                     continue
                 
                 if self._is_async:
@@ -417,33 +420,41 @@ class OrchestrationLayer:
         self._lb_source.call(len(batch), self._execute_batch, (batch,))
         
     def push_batch(self, batch):
-        collected_max = self._queue_max - self._queue.qsize()
-        collected_max = min(collected_max, len(batch))
-        
         batch_aggregates = self._aggregate_batch_to_owners(batch)
         batch_leftovers = []
-        
         accepted_batch = []
-        remaining_capacity = collected_max
         
-        for batch_owner in batch_aggregates.keys():
-            batch_aggregate = sorted(batch_aggregates[batch_owner])
+        # The capacity check (qsize()) and the reservation it justifies
+        # (deciding + enqueuing how many frames get in) have to be one
+        # atomic step. Otherwise two concurrent push_batch calls (routine,
+        # since multiple upstream layer threads can target this layer at
+        # once) can both read the same low occupancy and both proceed to
+        # fill up to their own collected_max, jointly overshooting
+        # _queue_max - defeating this layer's backpressure entirely.
+        with self._queue_capacity_lock:
+            collected_max = self._queue_max - self._queue.qsize()
+            collected_max = min(collected_max, len(batch))
             
-            # Strictly bound the accepted region by remaining capacity
-            batch_region = self._ensure_batch(batch_owner, batch_aggregate, remaining_capacity)
+            remaining_capacity = collected_max
             
-            # Correctly separate leftovers without overlapping
-            batch_leftovers.extend(batch_aggregate[batch_region:])
-            
-            for i in range(0, batch_region):
-                accepted_batch.append(batch_aggregate[i])
+            for batch_owner in batch_aggregates.keys():
+                batch_aggregate = sorted(batch_aggregates[batch_owner])
                 
-            remaining_capacity -= batch_region
+                # Strictly bound the accepted region by remaining capacity
+                batch_region = self._ensure_batch(batch_owner, batch_aggregate, remaining_capacity)
                 
-        accepted_batch = sorted(accepted_batch)
-        
-        for f in accepted_batch:
-            self._queue.put(f)
+                # Correctly separate leftovers without overlapping
+                batch_leftovers.extend(batch_aggregate[batch_region:])
+                
+                for i in range(0, batch_region):
+                    accepted_batch.append(batch_aggregate[i])
+                    
+                remaining_capacity -= batch_region
+                    
+            accepted_batch = sorted(accepted_batch)
+            
+            for f in accepted_batch:
+                self._queue.put(f)
             
         batch_size = len(accepted_batch)
         
@@ -670,6 +681,8 @@ class Orchestrator:
         collected = []
         
         with self._window_lock:
+            fp = self._window_ends
+            
             try:
                 for offset in range(0, collected_max):
                     index = offset + self._window_logt
@@ -682,10 +695,9 @@ class Orchestrator:
             except queue.Empty:
                 pass
             
-            # MOVED: Always increments, even if the queue empties early
+            # Always increments, even if the queue empties early
             self._window_logt += len(collected)
-        
-        with self._window_lock:
+            
             self._window_ends = fp
             
             if len(collected) < collected_max:
