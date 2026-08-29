@@ -1,3 +1,4 @@
+import asyncio
 import threading
 import time
 
@@ -349,3 +350,72 @@ def test_discarding_a_frame_stalls_a_downstream_contiguous_layer(pipeline, make_
     assert wait_until(lambda: len(received) >= 2, timeout=1.5)
     time.sleep(0.3)
     assert sorted(received) == [0, 1]
+
+
+def test_coroutine_handler_auto_detected_and_forwards_result(pipeline, make_orchestrator):
+    received = []
+
+    async def layer1_handler(owner, task, batch):
+        await asyncio.sleep(0.01)
+        return [f for f in batch if f.userdata % 2 == 0]
+
+    def layer2_handler(owner, task, batch):
+        received.extend(f.userdata for f in batch)
+
+    pipeline.add_layer(role="cpu", handler=layer1_handler)
+    pipeline.add_layer(role="cpu", handler=layer2_handler)
+    pipeline.finish()
+
+    orch = make_orchestrator()
+    orch.feed(list(range(10)))
+
+    assert wait_until(lambda: len(received) >= 5, timeout=3.0)
+    time.sleep(0.3)
+    assert sorted(received) == [0, 2, 4, 6, 8]
+
+
+def test_coroutine_handler_exception_aborts_task_without_orphaning_frames(pipeline, make_orchestrator):
+    received = []
+    discarded = []
+
+    async def layer1_handler(owner, task, batch):
+        await asyncio.sleep(0.01)
+        raise RuntimeError("deliberate coroutine handler failure")
+
+    def layer2_handler(owner, task, batch):
+        received.extend(f.userdata for f in batch)
+
+    pipeline.add_layer(role="cpu", handler=layer1_handler)
+    pipeline.add_layer(role="cpu", handler=layer2_handler)
+    pipeline.finish()
+
+    orch = make_orchestrator()
+    orch.on_discard(lambda batch: discarded.extend(f.userdata for f in batch))
+    orch.feed(list(range(4)))
+
+    assert wait_until(lambda: len(discarded) == 4, timeout=2.0)
+    time.sleep(0.2)
+    assert received == []
+    assert sorted(discarded) == [0, 1, 2, 3]
+
+
+def test_coroutine_handler_reuses_one_dedicated_loop_across_batches(pipeline, make_orchestrator):
+    """Guards the fix for asyncio.run()'s per-call loop setup/teardown
+    cost: a coroutine-handler layer must run every batch on the same
+    long-lived event loop, not spin up a fresh one each time."""
+    seen_loop_ids = []
+
+    async def layer1_handler(owner, task, batch):
+        seen_loop_ids.append(id(asyncio.get_running_loop()))
+        return None
+
+    pipeline.add_layer(role="cpu", handler=layer1_handler)
+    pipeline.finish()
+
+    orch = make_orchestrator()
+    for i in range(5):
+        orch.feed([i])
+        time.sleep(0.05)
+
+    assert wait_until(lambda: len(seen_loop_ids) == 5, timeout=3.0)
+    assert len(set(seen_loop_ids)) == 1
