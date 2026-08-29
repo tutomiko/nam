@@ -2,14 +2,13 @@
 # 
 # A legacy file that made it into the codebase.
 # Intending to keep the API but replace the internals at some point, soon.
-# I'm aware there's a few bugs here, some of which are critical or very unpredictable.
 
 import threading
-import multiprocessing
 import os
 import time
 import queue
 import atexit
+import traceback
 
 
 def detect_cpu_count() -> int:
@@ -85,22 +84,36 @@ class Executor:
             future = None
             task = None
 
-            # A very fine implementation indeed. Anyone looking here is probably going to shake their 
-            # heads in disgust at this remnant that's busy polling. But it's been working solid for, what, 9 years now? 
-            # I refuse to touch it out of historical significance. Any contributor can switch to blocking + 
-            # posting the shutdown signal into the queue. That's gonna get us, what, some microseconds, maybe-ish? Let me know.
+            # Blocks with a timeout instead of busy-polling: idle threads
+            # sleep in queue.get() rather than spinning + time.sleep(), and
+            # still wake up promptly to notice shutdown_signaled - the
+            # timeout just bounds how long that notice can take, it isn't
+            # a poll interval for actual work (a put() wakes get() immediately).
             try:
-                task, args, future = self.queue.get(block=False)
+                task, args, future = self.queue.get(timeout=0.1)
             except queue.Empty:
-                time.sleep(self.clock / 1_000_000)
-                
                 continue
             
             if task is not None:
-                task(*args)
+                try:
+                    task(*args)
+                except Exception:
+                    # A misbehaving task must never be allowed to kill this
+                    # worker thread - that would silently shrink the pool
+                    # by one forever, and any tasks already queued behind
+                    # it would still be waiting on a thread that no longer
+                    # exists to pick them up.
+                    traceback.print_exc()
                 
             if future is not None:
-                future.realize()
+                # realize() (and therefore the caller's promise) must fire
+                # even when the task raised, or callers awaiting future.happened
+                # / a promise callback would wait forever for a task that
+                # already finished (badly, but finished).
+                try:
+                    future.realize()
+                except Exception:
+                    traceback.print_exc()
         
     def set_clock (self, clock_nanos):
         self.clock = clock_nanos
