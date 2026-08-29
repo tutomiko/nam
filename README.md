@@ -15,6 +15,19 @@ The use of Python and React also ensures a cloud-friendly, modern approach for t
 
 nam does not attempt to compete with platforms like Kubernetes, but is instead designed to work alongside them. Additionally, nam is intentionally minimal and lightweight and does not attempt to re-invent any wheels or force you to program against some enormous API - it enforces a maintainable, self-contained architecture and provides module resolution primitives and a unified concurrency model to work with. Whichever framework/platform you choose to run it, and whichever libraries you choose for the communication between modules, this is all up to you, and not a concern of nam.
 
+```mermaid
+flowchart LR
+    subgraph proc["One process (unsharded)"]
+        M1[Module A]
+        M2[Module B]
+        M3[Module C]
+    end
+    Server[FastAPI server] --> proc
+```
+
+The diagram above is the default, single-process shape. See [Sharding](#sharding) for what changes when a project outgrows one machine.
+
+
 ## Why does it exist?
 The purpose of nam is to make complex, modular, distributed web services faster to develop, deploy, and maintain. Its cross-backend inference acceleration and concurrency orchestration aren't only intended to make production services fast, but to also make their development and testing faster.
 
@@ -135,6 +148,38 @@ Each top-level key is a build name, launched with `nam my-project -build
 - `optimization`: optional, overrides the project-level `optimization` for
   processes launched from this build.
 
+The `builds.yaml` example above splits into two processes like this - each
+box is a separate OS process, possibly on a separate machine, and the
+dotted arrows are the `reference` lookups resolved through `Router` at
+request time, not compile-time wiring:
+
+```mermaid
+flowchart LR
+    subgraph webserver["webserver process"]
+        direction TB
+        annotator[annotator]
+        corpus[corpus]
+        curator[curator]
+    end
+
+    subgraph worker["worker process"]
+        direction TB
+        classifier[classifier]
+        image_processor[image_processor]
+    end
+
+    webserver -. "reference: classifier -> URL_WORKER" .-> worker
+    webserver -. "reference: image_processor -> URL_WORKER" .-> worker
+    worker -. "reference: corpus -> URL_WEBSERVER" .-> webserver
+```
+
+Nothing about `annotator`, `corpus`, `curator`, `classifier`, or
+`image_processor`'s own code changes between this sharded layout and
+running the whole project unsharded in one process - only which process
+each module is `include`d in, and which environment variables happen to
+be set, changes. That's the property sharding is built around: a module
+never hardcodes where another module lives.
+
 Launching without `-build` at all still works exactly as before - the
 whole project runs in one process, as if every module were `include`d in
 one implicit build with no `reference` entries.
@@ -178,6 +223,15 @@ gets a fully working `Router` - every discovered module is implicitly
 `include`d, so `get_hostname` always resolves locally and module code never
 needs to know whether it's running sharded or as one process.
 
+```mermaid
+flowchart TD
+    A["get_hostname(module_id)"] --> B{"module_id in this build's include?"}
+    B -- yes --> C["return this process's own host:port"]
+    B -- no --> D{"module_id in this build's reference?"}
+    D -- yes --> E["read the mapped env var, return that host:port"]
+    D -- no --> F["raise immediately"]
+```
+
 ## Reload and rebuilding
 
 When `reload: true` (the default), nam watches your project for changes:
@@ -205,6 +259,57 @@ This sets up a shared thread pool (`concurrency.executor`) and a global
 load balancer that every `OrchestrationPipeline` schedules work through.
 Modules don't create their own thread pools; they build a pipeline against
 the one nam already started.
+
+The pieces underneath, and how work actually gets from a layer to a
+worker thread:
+
+```mermaid
+flowchart TD
+    subgraph pipeline["Your OrchestrationPipeline"]
+        L1["Layer 1 (role=cpu)"]
+        L2["Layer 2 (role=gpu)"]
+        L3["Layer 3 (role=cpu)"]
+    end
+
+    L1 -->|"_lb_source.call(...)"| LB
+    L2 -->|"_lb_source.call(...)"| LB
+    L3 -->|"_lb_source.call(...)"| LB
+
+    subgraph LB["LoadBalancer (one per process)"]
+        direction TB
+        Pcpu["cpu partition"]
+        Pgpu["gpu partition"]
+        Pdisk["disk partition"]
+        Pnet["network partition"]
+    end
+
+    LB -->|"picks cheapest-adjusted-for-age task per partition"| EX
+
+    subgraph EX["Executor (shared thread pool)"]
+        direction LR
+        T1[worker thread]
+        T2[worker thread]
+        T3[worker thread]
+    end
+```
+
+Every `OrchestrationLayer` registers its own `LoadBalancerSource` under one
+of the four partitions (`role=` in `add_layer`). The `LoadBalancer` keeps a
+moving average of how long each source's work actually takes and uses that
+to decide what to dispatch next - so a slow `gpu` layer doesn't starve a
+fast `cpu` layer sharing the same `Executor`, and a task that's been
+waiting too long gets bumped ahead regardless of size. `Executor`'s
+threads are undifferentiated: any worker thread may run a batch from any
+layer, of any role, at any time - the partitioning happens entirely in the
+`LoadBalancer`, not by giving each role its own dedicated threads.
+
+Two more dedicated background threads exist outside this diagram,
+independent of the `Executor` pool: a single scheduler thread
+(`nam.concurrency.scheduler`) that all layers use for their
+`yield_after`/backoff delays instead of each spinning up its own timer
+thread, and, only for layers whose handler is an `async def` function, one
+dedicated event loop thread per such layer (so `await`-based handlers
+don't pay `asyncio`'s loop setup/teardown cost on every batch).
 
 ### Pipelines and layers
 
@@ -256,6 +361,35 @@ below.
   return before moving on. The handler is responsible for calling
   `task.ready(...)` or `task.abort()` itself, whenever it's actually done
   (which can be from another thread, later).
+
+Put together, this is what happens to one pulled batch inside
+`_execute_batch`, matching the code path exactly (`shared` decides how the
+batch is grouped before the handler runs at all; `asynchronous` decides
+whether anything downstream happens on return at all):
+
+```mermaid
+flowchart TD
+    A["Batch pulled off this layer's queue"] --> B{"shared=True?"}
+    B -- yes --> C["One handler call for the whole batch"]
+    B -- no --> D["Split by owner, one handler call per owner"]
+
+    C --> E{"asynchronous=True?"}
+    D --> E
+
+    E -- yes --> F["Return value ignored.\nHandler must call task.ready()/discard()/abort() itself,\nfrom any thread, whenever it's actually done."]
+    E -- no --> G["Handler's return value resolves the task:\nNone = whole batch proceeds,\nlist = only those frames proceed, rest discarded"]
+
+    F --> H["Next layer (via _on_task_ready)"]
+    G --> H
+```
+
+A handler that calls `task.ready()`/`discard()`/`abort()` itself under
+`asynchronous=False` is also fine, and wins over the return value if it
+resolves first (it always does, since it necessarily runs before the
+handler can return) - but returning a non-`None` value on top of that is a
+bug: the return value is silently discarded and logged as a conflict,
+since the manual call already settled the task. Do exactly one or the
+other.
 
 ### Handler return values
 
@@ -357,6 +491,23 @@ in. Register `on_ready`/`on_discarded` callbacks to get frames back one at
 a time as they complete or get dropped, and `on_dispatch` if you need to
 record caller-side context per fed item (see the docstring on
 `OrchestrationClient` for the nested-client use case this is for).
+
+```mermaid
+flowchart LR
+    Feed["client.feed(items)"] --> Interim["Interim queue\n(unbounded)"]
+    Interim -->|"pulled up to free window room"| Window["In-flight window\n(<= max_window frames)"]
+    Window --> Pipeline["OrchestrationPipeline\n(layers, in order)"]
+    Pipeline -->|"reached pipeline.finish()"| Ready["on_ready(frame)"]
+    Pipeline -->|"discarded by any layer"| Discarded["on_discarded(frame)"]
+    Ready -->|"frees one window slot"| Window
+    Discarded -->|"frees one window slot"| Window
+```
+
+Feeding more items than `max_window` doesn't block or error - they queue
+in the unbounded interim queue and get pulled into the window as slots
+free up. This is what actually provides backpressure: a slow pipeline
+just means the window stays full and the interim queue grows, rather than
+every fed item spawning unbounded concurrent work.
 
 Call `client.close()` when you're done with it, to clear any per-owner
 backlog state held by `contiguous` layers.
