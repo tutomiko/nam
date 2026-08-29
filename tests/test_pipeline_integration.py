@@ -511,3 +511,84 @@ def test_asynchronous_true_handler_return_value_never_warns(pipeline, make_orche
 
     captured = capsys.readouterr()
     assert "[Orchestrator]" not in captured.out
+
+
+def test_coroutine_handler_with_asynchronous_true_still_blocks_the_worker_thread(pipeline, make_orchestrator):
+    """asynchronous=True on a coroutine handler is a real, working
+    combination (it doesn't crash, task.ready() still resolves the batch
+    correctly - see test_coroutine_handler_auto_detected_and_forwards_result
+    for the plain-async=False case), but it does NOT get you the thing
+    asynchronous=True exists for: freeing the calling worker thread while
+    the handler is still working.
+
+    _invoke_handler always drives the coroutine to completion via
+    self._handler_event_loop.run(result), which blocks on
+    concurrent.futures.Future.result() regardless of the asynchronous=
+    flag - asynchronous only changes whether _execute_batch looks at the
+    return value afterwards, not whether the call itself blocks. The
+    await points inside the coroutine yield control on the layer's own
+    dedicated event loop thread, not on the Executor worker thread that
+    called _invoke_handler and is sitting blocked in .result() the whole
+    time.
+
+    This test pins that down concretely: with only 2 worker threads
+    total, feeding 6 single-item batches to a coroutine handler that
+    awaits (not blocks synchronously - it truly yields to the loop) for
+    300ms each must still cap concurrent in-flight handler calls at 2,
+    matching the worker pool size - not 6, which is what you'd see if
+    asynchronous=True had actually freed the worker thread the way it
+    does for a plain sync handler that calls task.ready() from a
+    separate background thread it spawned itself.
+    """
+    concurrent_in_flight = []
+    peak_concurrency = [0]
+    lock = threading.Lock()
+
+    async def layer1_handler(owner, task, batch):
+        with lock:
+            concurrent_in_flight.append(1)
+            peak_concurrency[0] = max(peak_concurrency[0], len(concurrent_in_flight))
+        await asyncio.sleep(0.3)
+        with lock:
+            concurrent_in_flight.pop()
+        task.ready(batch)
+
+    pipeline.add_layer(role="cpu", handler=layer1_handler, asynchronous=True)
+    pipeline.finish()
+
+    orch = make_orchestrator()
+    for i in range(6):
+        orch.feed([i])
+        time.sleep(0.02)
+
+    time.sleep(1.5)
+
+    from nam import concurrency as cc
+    assert peak_concurrency[0] <= len(cc.executor)
+
+
+def test_coroutine_handler_explicit_asynchronous_false_matches_default(pipeline, make_orchestrator):
+    """asynchronous defaults to False - an async def handler with
+    asynchronous=False spelled out explicitly must behave identically to
+    the default case already covered by
+    test_coroutine_handler_auto_detected_and_forwards_result. This just
+    pins that the explicit spelling isn't treated differently anywhere."""
+    received = []
+
+    async def layer1_handler(owner, task, batch):
+        await asyncio.sleep(0.01)
+        return [f for f in batch if f.userdata % 2 == 0]
+
+    def layer2_handler(owner, task, batch):
+        received.extend(f.userdata for f in batch)
+
+    pipeline.add_layer(role="cpu", handler=layer1_handler, asynchronous=False)
+    pipeline.add_layer(role="cpu", handler=layer2_handler)
+    pipeline.finish()
+
+    orch = make_orchestrator()
+    orch.feed(list(range(10)))
+
+    assert wait_until(lambda: len(received) >= 5, timeout=3.0)
+    time.sleep(0.3)
+    assert sorted(received) == [0, 2, 4, 6, 8]
