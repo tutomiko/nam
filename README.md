@@ -621,6 +621,11 @@ pip install pytest
 pytest
 ```
 
+## Status
+Development and testing is actively ongoing. 
+The API will remain the same, so all changes will be to internals, not the API surface. 
+Safe to integrate in only that regard, but note the warning below.
+
 ## Experimental / Partial
 This is a partial release of what was internal tooling. 
 Most of the unit tests were not included, and most documentation has been stripped 
