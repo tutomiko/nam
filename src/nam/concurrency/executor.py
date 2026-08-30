@@ -1,7 +1,4 @@
 # executor.py
-# 
-# A legacy file that made it into the codebase.
-# Intending to keep the API but replace the internals at some point, soon.
 
 import threading
 import os
