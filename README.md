@@ -636,6 +636,9 @@ for production.
 
 I know there's like, two bugs in there somewhere. Under some rock - or should I say... a monolith?
 
+## Origins / Trivia
+This project actually has roots in my [conceptually overlapping experiments in framework design](https://github.com/tutomiko/xboot/tree/main/main/java/com/xahico/boot/publish).
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
