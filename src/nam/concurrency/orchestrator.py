@@ -94,6 +94,19 @@ class Task:
             self._remaining -= claimed
             return claimed
 
+    def _claim_remaining_with_rejects(self, frames):
+        """Like _claim_remaining, but also reports which of the named
+        frames were NOT claimable (already resolved by an earlier call) -
+        computed under the same lock as the claim itself, so a concurrent
+        ready()/discard()/retry() racing on the same frame can't produce
+        a false "already resolved" warning or a missed one."""
+        with self._settle_lock:
+            requested = set(frames)
+            claimed = requested & self._remaining
+            already_claimed = requested - claimed
+            self._remaining -= claimed
+            return claimed, already_claimed
+
     def ready(self, batch=None):
         if not self._settle_once():
             if batch is None:
@@ -132,6 +145,70 @@ class Task:
 
     def abort(self):
         self.discard(self._batch)
+
+    def retry(self, backoff, batch=None):
+        """Claim not-yet-resolved frames (all remaining unclaimed frames
+        by default, or just `batch`) and re-submit them back into this
+        same layer's queue after `backoff` milliseconds, instead of
+        forwarding them downstream or dropping them. Follows the exact
+        same first-call-settles / later-calls-stream-remaining-frames
+        contract as ready()/discard() - a handler can retry a subset now
+        and ready()/discard()/retry() the rest later, from any thread,
+        same as the streaming pattern documented on this class.
+
+        Unlike ready()/discard(), `batch=None` here does NOT mean "every
+        frame in the original batch" - it means "whatever hasn't already
+        been readied/discarded/retried". This matters because retry()
+        commonly runs alongside partial ready()/discard() calls in the
+        same handler invocation (retry the failures, ready the
+        successes): if `batch` is omitted, only the frames nobody has
+        claimed yet are retried.
+
+        If `batch` explicitly names frames that were already claimed by
+        an earlier ready()/discard()/retry() call, that's a handler bug
+        (double-resolving a frame) - it's flagged with a warning, same as
+        _warn_conflicting_resolution, and those frames are filtered out
+        of the retry rather than silently double-submitted or raising.
+
+        Retried frames go back through push_batch(), the same entrypoint
+        upstream layers use to hand this layer new work - so contiguous
+        ordering, capacity backpressure, and batching all apply to a
+        retried frame exactly as they would to a fresh one.
+        """
+        frames = list(self._remaining) if batch is None else self._as_frame_list(batch)
+        self._settle_once()
+        self._retry_remaining_frames(frames, backoff)
+
+    def _retry_remaining_frames(self, frames, backoff):
+        claimed, already_claimed = self._claim_remaining_with_rejects(frames)
+
+        if already_claimed:
+            self._warn_already_resolved_retry(already_claimed)
+
+        if not claimed:
+            return
+        self._schedule_retry(self._layer, [f for f in self._batch if f in claimed], backoff)
+
+    def _warn_already_resolved_retry(self, already_claimed):
+        """retry() was explicitly given one or more frames that a prior
+        ready()/discard()/retry() call already claimed. This is a bug in
+        the handler, deterministic per-frame rather than transient, so
+        it's surfaced loudly rather than silently double-submitting the
+        frame (which would let it enter the layer twice) or silently
+        dropping the whole call. The already-claimed frames are filtered
+        out; anything else named in the same call still proceeds.
+        """
+        print(
+            f"[Orchestrator] Layer {self._layer} task.retry() was called with "
+            f"{len(already_claimed)} frame(s) that were already resolved by an "
+            f"earlier ready()/discard()/retry() call on the same task. Those "
+            f"frame(s) were skipped; only still-unclaimed frames were retried. "
+            f"Fix the handler to not name a frame in more than one resolution call."
+        )
+
+    @staticmethod
+    def _schedule_retry(layer, retry_batch, backoff):
+        _execute_scheduler(backoff / 1000, layer.push_batch, (retry_batch,))
 
 
 class _LayerEventLoopThread:
