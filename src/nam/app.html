@@ -20,7 +20,7 @@
     <script>
         (function() {
             const pathParts = window.location.pathname.split('/').filter(Boolean);
-            const moduleName = pathParts.length > 0 ? pathParts[0] : null;
+            const moduleName = (pathParts[0] === 'app' && pathParts.length > 1) ? pathParts[1] : null;
 
             if (moduleName) {
                 const script = document.createElement('script');
