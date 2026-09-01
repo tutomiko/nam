@@ -22,7 +22,7 @@ nam is engineered explicitly for modern AI workloads, where heterogeneous comput
 
 ## Features
 
-- **Project layout** - a `project.yaml`, `modules/<id>/` directories (each
+- **Sustainable project layout** - a `project.yaml`, `modules/<id>/` directories (each
   with `module.yaml`, `backend/routes.py`, optional `frontend/`), optional
   `app.py` and `shared/`. Modules own their routes outright under `/api`,
   enforced by an AST-based conflict checker at startup, and are served at
