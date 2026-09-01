@@ -5,10 +5,10 @@ const TemplateApp = () => {
     const [message, setMessage] = useState(null);
 
     useEffect(() => {
-        fetch('/template/api/hello')
+        fetch('/api/template/hello')
             .then(res => res.json())
             .then(data => setMessage(data.message))
-            .catch(err => console.error('Failed to load /template/api/hello:', err));
+            .catch(err => console.error('Failed to load /api/template/hello:', err));
     }, []);
 
     return (
