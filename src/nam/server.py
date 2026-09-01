@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from starlette.middleware.gzip import GZipMiddleware
 
 from nam import concurrency
@@ -13,7 +13,7 @@ from nam.build import BuildConfig, load_build
 from nam.inference import hook as inference_hook
 from nam.module import discover_module_specs
 from nam.project import Project, activate_project
-from nam.project_loader import load_modules_into_app
+from nam.project_loader import APP_MOUNT_PREFIX, load_modules_into_app
 from nam.router import Router, build_router, set_active_router
 
 APP_HTML_PATH = Path(__file__).parent / "app.html"
@@ -99,6 +99,27 @@ def create_app(project: Project) -> FastAPI:
 
     @app.get("/")
     def read_root():
+        """
+        Bare "/" has no module in the path, so app.html's own script
+        (which only loads a bundle when the URL is already /app/<id>)
+        would otherwise render nothing. Redirect to the first mounted
+        "site" module's page instead (a "service" module like a worker
+        has no frontend to land on, even though it's still mounted) -
+        the first mounted module overall only if no site is mounted, so
+        landing on the raw address:port still goes somewhere rather than
+        a blank shell. Server-side, not client-side, so it works before
+        any JS runs and shows up correctly in server logs / curl -I.
+        """
+        reachable_modules = [
+            m for m in loaded.mounted
+            if project.build_name is None or m["id"] in included_module_ids
+        ]
+        landing_module = next(
+            (m for m in reachable_modules if m["type"] == "site"),
+            reachable_modules[0] if reachable_modules else None,
+        )
+        if landing_module is not None:
+            return RedirectResponse(url=f"{APP_MOUNT_PREFIX}/{landing_module['id']}")
         return FileResponse(str(APP_HTML_PATH))
 
     return app
