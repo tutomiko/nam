@@ -10,8 +10,7 @@ multi-stage CPU, GPU, disk or network -bound work without every module having to
 its own thread pool, batching logic, and backpressure.
 
 The contract of nam projects is: the modules must never access each others' files directly, but instead establish a HTTP contract by which they communicate.
-This allows each module to remain independent and for a single project to be **sharded** across multiple processes - possibly on different machines - without changing any module code. See [Sharding](#sharding) below.
-The use of Python and React also ensures a cloud-friendly, modern approach for the application's design.
+This allows each module to remain independent and for a single project to be **sharded** across multiple processes - possibly on different machines - without changing any module code. The use of Python and React also ensures a cloud-friendly, modern approach for the application's design.
 
 nam does not attempt to compete with platforms like Kubernetes, but is instead designed to work alongside them. Additionally, nam is intentionally minimal and lightweight and does not attempt to re-invent any wheels or force you to program against some enormous API - it enforces a maintainable, self-contained architecture and provides module resolution primitives and a unified concurrency model to work with. Whichever framework/platform you choose to run it, and whichever libraries you choose for the communication between modules, this is all up to you, and not a concern of nam.
 
@@ -22,24 +21,24 @@ nam is engineered explicitly for modern AI workloads, where heterogeneous comput
 
 ## Features
 
-- **Sustainable project layout** - a `project.yaml`, `modules/<id>/` directories (each
+- **Sustainable Project Layout** - a `project.yaml`, `modules/<id>/` directories (each
   with `module.yaml`, `backend/routes.py`, optional `frontend/`), optional
   `app.py` and `shared/`. Modules own their routes outright under `/api`,
   enforced by an AST-based conflict checker at startup, and are served at
   `/app/<id>` with `GET /` redirecting there automatically. See
   [docs/feature_project_management.md](docs/feature_project_management.md).
-- **Sharding** - split a project into multiple `builds.yaml`-defined
+- **Codebase Sharding** - split a project into multiple `builds.yaml`-defined
   processes with zero module code changes; excluded modules' routes are
   transparently proxied via `Router`. See
   [docs/feature_sharding.md](docs/feature_sharding.md).
-- **Reload and rebuilding** - Python reload via uvicorn, hash-based
+- **Module Hotswapping** - Python reload via uvicorn, hash-based
   frontend rebuilds, toggled with `reload` in `project.yaml`. See
   [docs/feature_reload.md](docs/feature_reload.md).
-- **Concurrency** - a shared thread pool and load balancer
+- **Unified Concurrency** - a shared thread pool and load balancer
   (`nam.concurrency`) with pipelines, layers, tasks, and
   `OrchestrationClient` for batched multi-stage work. See
   [docs/feature_unified_concurrency.md](docs/feature_unified_concurrency.md).
-- **Inference** - transparent device resolution (CUDA, torch-directml,
+- **Inference Acceleration** - transparent device resolution (CUDA, torch-directml,
   CPU) and batch handling for plain PyTorch modules, plus opt-in
   export/compilation to OpenVINO. See
   [docs/feature_inference_acceleration.md](docs/feature_inference_acceleration.md).
