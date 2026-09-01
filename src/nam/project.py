@@ -20,6 +20,7 @@ class Project:
     root: Path
     config: dict
     environment_name: str
+    name: str
     parallellism: Optional[int]
     optimization: str
     reload: bool
@@ -29,6 +30,7 @@ class Project:
     shared_dir: Path
     weights_dir: Path
     bundles_dir: Path
+    assets_dir: Path
     data_dir: Path
     env_data_dir: Path
     build_name: Optional[str] = None
@@ -121,6 +123,7 @@ def load_project(project_path: str | Path, build_name: Optional[str] = None) -> 
         root=root,
         config=config,
         environment_name=environment_name,
+        name=config.get("name") or environment_name,
         parallellism=_resolve_parallellism(config.get("parallellism")),
         optimization=config.get("optimization", DEFAULT_OPTIMIZATION),
         reload=bool(config.get("reload", True)),
@@ -130,6 +133,7 @@ def load_project(project_path: str | Path, build_name: Optional[str] = None) -> 
         shared_dir=root / "shared",
         weights_dir=root / "weights",
         bundles_dir=root / "bundles",
+        assets_dir=root / "assets",
         data_dir=data_dir,
         env_data_dir=env_data_dir,
         build_name=build_name,
