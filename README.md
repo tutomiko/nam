@@ -10,8 +10,7 @@ multi-stage CPU, GPU, disk or network -bound work without every module having to
 its own thread pool, batching logic, and backpressure.
 
 The contract of nam projects is: the modules must never access each others' files directly, but instead establish a HTTP contract by which they communicate.
-This allows each module to remain independent and for a single project to be **sharded** across multiple processes - possibly on different machines - without changing any module code. See [Sharding](#sharding) below.
-The use of Python and React also ensures a cloud-friendly, modern approach for the application's design.
+This allows each module to remain independent and for a single project to be **sharded** across multiple processes - possibly on different machines - without changing any module code. The use of Python and React also ensures a cloud-friendly, modern approach for the application's design.
 
 nam does not attempt to compete with platforms like Kubernetes, but is instead designed to work alongside them. Additionally, nam is intentionally minimal and lightweight and does not attempt to re-invent any wheels or force you to program against some enormous API - it enforces a maintainable, self-contained architecture and provides module resolution primitives and a unified concurrency model to work with. Whichever framework/platform you choose to run it, and whichever libraries you choose for the communication between modules, this is all up to you, and not a concern of nam.
 
