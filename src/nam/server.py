@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.middleware.gzip import GZipMiddleware
 
 from nam import concurrency
@@ -26,8 +26,20 @@ APP_HTML_PATH = Path(__file__).parent / "app.html"
 GZIP_MIN_SIZE_BYTES = 500
 
 
-def _serve_app_html():
-    return FileResponse(str(APP_HTML_PATH))
+def _make_module_page_handler(project: Project, module_name: str):
+    """
+    Returns a handler that serves app.html with its {{TITLE}} placeholder
+    filled in as "{ModuleName} - {ProjectName}", so each module's page
+    (and browser tab / bookmark) is identifiable rather than every module
+    and the bare "/" all showing the same static title.
+    """
+    title = f"{module_name} - {project.name}"
+
+    def _serve() -> HTMLResponse:
+        html = APP_HTML_PATH.read_text().replace("{{TITLE}}", title)
+        return HTMLResponse(html)
+
+    return _serve
 
 
 def _resolve_router(project: Project) -> Router:
@@ -55,6 +67,7 @@ def create_app(project: Project) -> FastAPI:
 
     project.weights_dir.mkdir(parents=True, exist_ok=True)
     project.bundles_dir.mkdir(parents=True, exist_ok=True)
+    project.assets_dir.mkdir(parents=True, exist_ok=True)
 
     inference_hook.install(project)
 
@@ -88,12 +101,17 @@ def create_app(project: Project) -> FastAPI:
 
     app.mount("/weights", StaticFiles(directory=str(project.weights_dir)), name="weights")
     app.mount("/bundles", StaticFiles(directory=str(project.bundles_dir)), name="bundles")
+    app.mount("/assets", StaticFiles(directory=str(project.assets_dir)), name="assets")
 
     app.state.app_html_path = APP_HTML_PATH
     app.state.router = router
 
     included_module_ids = router.included_modules if project.build_name is not None else None
-    loaded = load_modules_into_app(app, project, _serve_app_html, included_module_ids=included_module_ids)
+    loaded = load_modules_into_app(
+        app, project,
+        lambda module_name: _make_module_page_handler(project, module_name),
+        included_module_ids=included_module_ids,
+    )
     app.state.mounted_modules = loaded.mounted
     app.state.project = project
 
@@ -120,6 +138,6 @@ def create_app(project: Project) -> FastAPI:
         )
         if landing_module is not None:
             return RedirectResponse(url=f"{APP_MOUNT_PREFIX}/{landing_module['id']}")
-        return FileResponse(str(APP_HTML_PATH))
+        return HTMLResponse(APP_HTML_PATH.read_text().replace("{{TITLE}}", project.name))
 
     return app
