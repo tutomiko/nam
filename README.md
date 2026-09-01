@@ -15,19 +15,6 @@ The use of Python and React also ensures a cloud-friendly, modern approach for t
 
 nam does not attempt to compete with platforms like Kubernetes, but is instead designed to work alongside them. Additionally, nam is intentionally minimal and lightweight and does not attempt to re-invent any wheels or force you to program against some enormous API - it enforces a maintainable, self-contained architecture and provides module resolution primitives and a unified concurrency model to work with. Whichever framework/platform you choose to run it, and whichever libraries you choose for the communication between modules, this is all up to you, and not a concern of nam.
 
-```mermaid
-flowchart LR
-    subgraph proc["One process (unsharded)"]
-        M1[Module A]
-        M2[Module B]
-        M3[Module C]
-    end
-    Server[FastAPI server] --> proc
-```
-
-The diagram above is the default, single-process shape. See [Sharding](#sharding) for what changes when a project outgrows one machine.
-
-
 ## Why does it exist?
 The purpose of nam is to make complex, modular, distributed web services faster to develop, deploy, and maintain. Its cross-backend inference acceleration and concurrency orchestration aren't only intended to make production services fast, but to also make their development and testing faster.
 
