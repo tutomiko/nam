@@ -22,7 +22,7 @@ nam is engineered explicitly for modern AI workloads, where heterogeneous comput
 
 ## Features
 
-- **Sustainable project layout** - a `project.yaml`, `modules/<id>/` directories (each
+- **Sustainable Project Layout** - a `project.yaml`, `modules/<id>/` directories (each
   with `module.yaml`, `backend/routes.py`, optional `frontend/`), optional
   `app.py` and `shared/`. Modules own their routes outright under `/api`,
   enforced by an AST-based conflict checker at startup, and are served at
@@ -32,14 +32,14 @@ nam is engineered explicitly for modern AI workloads, where heterogeneous comput
   processes with zero module code changes; excluded modules' routes are
   transparently proxied via `Router`. See
   [docs/feature_sharding.md](docs/feature_sharding.md).
-- **Reload and rebuilding** - Python reload via uvicorn, hash-based
+- **Module Hotswapping** - Python reload via uvicorn, hash-based
   frontend rebuilds, toggled with `reload` in `project.yaml`. See
   [docs/feature_reload.md](docs/feature_reload.md).
-- **Concurrency** - a shared thread pool and load balancer
+- **Unified Concurrency** - a shared thread pool and load balancer
   (`nam.concurrency`) with pipelines, layers, tasks, and
   `OrchestrationClient` for batched multi-stage work. See
   [docs/feature_unified_concurrency.md](docs/feature_unified_concurrency.md).
-- **Inference** - transparent device resolution (CUDA, torch-directml,
+- **Inference Acceleration** - transparent device resolution (CUDA, torch-directml,
   CPU) and batch handling for plain PyTorch modules, plus opt-in
   export/compilation to OpenVINO. See
   [docs/feature_inference_acceleration.md](docs/feature_inference_acceleration.md).
