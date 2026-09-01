@@ -210,6 +210,57 @@ frames one at a time as they complete, from any thread, without every
 frame needing to be ready simultaneously. Once every frame in the batch
 has been claimed, the task is fully resolved.
 
+### Retrying
+
+`task.retry(backoff, batch=None)` re-submits frames back into this same
+layer instead of forwarding them downstream or dropping them - useful for
+a handler that hit a transient failure (a flaky upstream call, a
+momentarily saturated resource) and wants those frames re-run through its
+own handler again rather than failing them outright:
+
+```python
+def call_flaky_backend(owner, task, batch):
+    try:
+        for f in batch:
+            f.result = flaky_backend.call(f.userdata)
+    except TransientError:
+        task.retry(500)  # re-run the whole batch again in 500ms
+        return
+    return batch
+
+pipeline.add_layer(role="network", handler=call_flaky_backend)
+```
+
+`backoff` is milliseconds. `batch` follows the same shape rules as
+`ready()`/`discard()` (a list, a single `OrchestrationFrame`, or omitted)
+but `None` means something different here: for `ready()`/`discard()`,
+omitting `batch` means "the whole original batch"; for `retry()` it means
+"whatever hasn't already been readied/discarded/retried" - which matters
+because retry() is usually mixed with a partial `ready()`/`discard()` in
+the same handler call (retry the failures, ready the successes), and you
+don't want to accidentally re-submit frames that already succeeded.
+
+Naming a frame in `batch` that some earlier `ready()`/`discard()`/
+`retry()` call already claimed is a handler bug - a warning is printed
+and that frame is filtered out of the retry rather than being silently
+re-submitted twice or silently dropped. Frames genuinely outside the
+task's batch are still filtered out silently, same as `ready()`/
+`discard()` already do.
+
+`retry()` follows the same first-call-settles / later-calls-stream
+contract as `ready()`/`discard()`: it can be combined with them (e.g.
+`ready()` the frames that succeeded, `retry()` the ones that didn't, in
+the same handler invocation), and, under `asynchronous=True`, called
+later from any thread as each frame's outcome becomes known.
+
+There's no built-in retry limit or backoff-growth policy - a handler that
+wants max-attempts or exponential backoff tracks that itself (e.g. a
+counter on the frame's `userdata`) and calls `task.discard()`/`abort()`
+once it gives up. A retried frame re-enters this layer's queue exactly
+like a fresh frame handed in by `push_batch()` from upstream: the same
+layer's `contiguous`, `min_batch`/`max_batch`, and capacity backpressure
+all apply to it.
+
 ## OrchestrationClient
 
 `OrchestrationClient` sits in front of a pipeline and manages a bounded
