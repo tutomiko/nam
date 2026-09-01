@@ -198,7 +198,7 @@ def _mount_proxy_routes_for_excluded_module(
     print(f"Proxying {len(discovered)} route(s) declared by {module.id} -> {router.get_hostname(module.id)} (Type: {module.type}, Icon: {module.icon})")
 
 
-def load_modules_into_app(app: FastAPI, project: Project, serve_app_html, included_module_ids: frozenset[str] | None = None) -> LoadedModules:
+def load_modules_into_app(app: FastAPI, project: Project, serve_app_html_factory, included_module_ids: frozenset[str] | None = None) -> LoadedModules:
     """
     included_module_ids, when given, restricts LOCAL MOUNTING to a single
     build's "include" list (see nam.build.load_build) - modules this
@@ -219,6 +219,12 @@ def load_modules_into_app(app: FastAPI, project: Project, serve_app_html, includ
     to that path. _check_no_route_conflicts is what makes this safe -
     two modules independently declaring the same path is a startup
     error, not a silent shadow.
+
+    serve_app_html_factory(module_name) builds the actual page handler
+    for one module - it's a factory, not a single shared handler, so
+    each module's /app/<id> page can carry its own <title> rather than
+    every module (and the bare "/" redirect target) rendering identical
+    markup.
     """
     ensure_project_importable(project)
 
@@ -240,6 +246,7 @@ def load_modules_into_app(app: FastAPI, project: Project, serve_app_html, includ
             continue
 
         try:
+            serve_app_html = serve_app_html_factory(module.name)
             app.add_api_route(f"{APP_MOUNT_PREFIX}/{module.id}", serve_app_html, methods=["GET"])
             app.add_api_route(f"{APP_MOUNT_PREFIX}/{module.id}/", serve_app_html, methods=["GET"])
 
