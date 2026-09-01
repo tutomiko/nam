@@ -44,8 +44,13 @@ _______________________
 _______________________
 nam ("Not Another Monolith") is a framework that runs a FastAPI app made
 of independently-developed "modules." Each module contributes:
-  - a backend (FastAPI router, mounted at /<module_id>/...)
-  - an optional frontend (a React app, auto-bundled with esbuild)
+  - a backend (FastAPI router, mounted flat onto /api with no injected
+    module-id segment - the module's routes.py owns its own full path,
+    e.g. /resource_manager/tokenizers - proxied transparently to
+    wherever the module actually lives when it isn't included in the
+    current build, see section 6)
+  - an optional frontend (a React app, auto-bundled with esbuild, served
+    at /app/<module_id>)
 A project is a directory of modules + shared code + config, launched with:
     nam <project_dir> [--host H] [--port P] [-build <name>]
 
@@ -93,7 +98,23 @@ _______________________
       module.yaml         REQUIRED. Module metadata (section 2b).
       backend/
         routes.py         REQUIRED. Must define a top-level `router`
-                           (FastAPI APIRouter). Mounted at /<module_id>/*.
+                           (FastAPI APIRouter). Routes declared on it (e.g.
+                           @router.get("/ping")) are mounted under
+                           /api/<module_id>, so this route is reached at
+                           /api/<module_id>/ping. nam parses routes.py
+                           statically (AST, never an import) to learn its
+                           route shapes, and checks at startup that no
+                           method+path is declared twice within the SAME
+                           module (cross-module collisions can't happen -
+                           <module_id> is part of every path); a conflict
+                           raises and the process refuses to start.
+
+                           IMPORTANT: /api/<module_id>/... exists in every
+                           build, even one that doesn't include this
+                           module locally - nam proxies each of its routes
+                           to wherever it actually runs (section 6). Write
+                           and call these paths the same way regardless of
+                           sharding.
       frontend/            OPTIONAL. React app. Entry point auto-detected:
                            App.jsx, app.jsx, index.jsx, index.js, or App.js
                            (first match wins). Auto-bundled with esbuild on
@@ -101,11 +122,16 @@ _______________________
                            `import '@shared/...'` to reach shared/ (frontend
                            shared code, separate from shared/src backend code).
                            If your module has a frontend, it's served at
-                           /<module_id> and should mount into `#root`.
+                           /app/<module_id> and should mount into `#root`.
 
-<module_id> IS the URL prefix and the Python import segment
-(`modules.<module_id>.backend.routes`) — keep it a valid identifier
-(lowercase, underscores, no spaces/dashes-as-python-issue).
+<module_id> is the Python import segment
+(`modules.<module_id>.backend.routes`), the page path segment under
+/app/<module_id>, AND the API path segment under /api/<module_id> — keep
+it a valid identifier (lowercase, underscores, no spaces/dashes-as-python-
+issue). Because <module_id> prefixes every one of a module's API routes,
+two modules can freely reuse the same sub-path (e.g. both having a
+GET /items) without colliding.
+
 
 2a. project.yaml keys (all optional, shown with defaults):
     environment: <string>       # data dir / process identity name;
@@ -287,12 +313,16 @@ port or assume it's local.
 
     router = get_active_router()
     base_url = router.get_hostname("other_module_id")   # -> "http://host:port"
-    # then make an HTTP call to f"{base_url}/other_module_id/api/..."
+    # then make an HTTP call to f"{base_url}/api/other_module_id/..."
 
 This works identically whether "other_module_id" is mounted in this same
-process or lives elsewhere — resolution is transparent. Raises clearly if
-the target module isn't reachable from this build's config (see
-builds.yaml's include/reference — that's what defines reachability).
+process or lives elsewhere — resolution is transparent, and so is what's
+on the other end of that URL: if "other_module_id" isn't included in
+this build, nam is itself proxying /api/other_module_id/... through to
+wherever that module actually runs (section 6), so the call above needs
+no special-casing either way. Raises clearly if the target module isn't
+reachable from this build's config at all (see builds.yaml's
+include/reference — that's what defines reachability).
 
 Inside a request handler, the router is also on `request.app.state.router`
 if you already have the request object; get_active_router() is for code
@@ -383,6 +413,20 @@ A module id absent from BOTH include and reference in the active build's
 config is a hard configuration error the first time something tries to
 resolve it via the router — fix builds.yaml, don't work around it in code.
 
+WHAT HAPPENS TO AN EXCLUDED MODULE'S API IN THIS PROCESS:
+A module not in this build's `include` list has its own backend code
+skipped entirely — routes.py is never imported here, so its actual
+Python dependencies (heavy ML libs, GPU-only packages, whatever) never
+need to be installed in this process. Its /api/<module_id>/... path
+still exists here, though: nam statically parses that module's
+routes.py (AST only, no import — see section 1) to learn its exact
+route shapes, then registers one proxy per route that forwards the
+request through Router.get_hostname(module_id) to whichever process
+DOES include it, streaming the response straight back. So calling code
+never branches on "is this module local or remote" — it just calls
+/api/<module_id>/... the same way in every build, and nam handles the
+rest.
+
 _______________________
 7. DO / DON'T CHEAT SHEET
 _______________________
@@ -430,7 +474,7 @@ modules/mymod/backend/routes.py:
     from fastapi import APIRouter
     router = APIRouter()
 
-    @router.get("/api/ping")
+    @router.get("/ping")
     def ping():
         return {"ok": True}
 
@@ -440,5 +484,10 @@ modules/mymod/backend/routes.py:
     const App = () => <div>hello</div>;
     createRoot(document.getElementById('root')).render(<App />);
 
-That's it — nam auto-discovers, mounts at /mymod/*, and bundles the
-frontend if present. No registration step anywhere else needed.
+That's it — nam auto-discovers, serves the page at /app/mymod, mounts
+this router's routes under /api/mymod (so /api/mymod/ping), and bundles
+the frontend if present. No registration step anywhere else needed - a
+route path only needs to be unique WITHIN mymod's own routes.py, since
+/api/mymod already keeps it from colliding with any other module. And
+if a build ever excludes mymod, /api/mymod/ping still works from every
+other process in that build - nam proxies it there automatically.
