@@ -28,7 +28,7 @@ nam is engineered explicitly for modern AI workloads, where heterogeneous comput
   enforced by an AST-based conflict checker at startup, and are served at
   `/app/<id>` with `GET /` redirecting there automatically. See
   [docs/feature_project_management.md](docs/feature_project_management.md).
-- **Sharding** - split a project into multiple `builds.yaml`-defined
+- **Codebase Sharding** - split a project into multiple `builds.yaml`-defined
   processes with zero module code changes; excluded modules' routes are
   transparently proxied via `Router`. See
   [docs/feature_sharding.md](docs/feature_sharding.md).
